@@ -2,6 +2,7 @@
 
 #include <TFT_eSPI.h>
 #include <WiFi.h>
+#include <driver/ledc.h>
 
 // ---------------------------------------------------------------------------
 // Hardware layout  –  UICPAL ESP32-S3-N16R8 DevKit
@@ -11,11 +12,46 @@
 //   LCD_CS   GPIO14  LCD_DC   GPIO47  LCD_RST  GPIO21
 //   LCD_BL   GPIO9   (HIGH = on)
 //
-// Touch  (XPT2046, bit-bang SPI – separate bus, NO IRQ):
-//   T_CLK GPIO42  T_CS GPIO1  T_DIN GPIO2  T_DO GPIO41
-//
 // NOTE: MFRC522 RST moved to GPIO16 to free GPIO21 for TFT RST.
+//
+// HW-204 Trackball  (5x digital, active LOW, internal pull-up):
+//   UP    GPIO6    DOWN  GPIO7
+//   LEFT  GPIO15   RIGHT GPIO17
+//   CLICK GPIO8
+//
+// HW-204 RGB LED  (common anode, active LOW, PWM):
+//   R  GPIO39   G  GPIO40   B  GPIO41
+//
+// Status colours:
+//   IDLE    → dim blue   WRITING → orange
+//   SUCCESS → green      ERROR   → red
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// HW-204 Trackball pin definitions
+// ---------------------------------------------------------------------------
+#define _TB_UP     6
+#define _TB_DOWN   7
+#define _TB_LEFT  15
+#define _TB_RIGHT 17
+#define _TB_CLICK  8
+
+#define _TB_DEBOUNCE_MS  200   // minimum ms between direction events
+
+// ---------------------------------------------------------------------------
+// HW-204 RGB LED (common anode – PWM value 0=full ON, 255=OFF)
+// ---------------------------------------------------------------------------
+#define _LED_R_PIN  39
+#define _LED_G_PIN  40
+#define _LED_B_PIN  41
+#define _LED_W_PIN   4   // WHT – white LED inside trackball ball
+
+#define _LED_CH_R   0    // LEDC channels
+#define _LED_CH_G   1
+#define _LED_CH_B   2
+#define _LED_CH_W   3
+#define _LED_FREQ   5000
+#define _LED_RES    8    // 8-bit (0-255)
 
 // ---------------------------------------------------------------------------
 // Screen layout  (landscape 320 × 240)
@@ -33,6 +69,28 @@ enum WriteStatus
     STATUS_SUCCESS,
     STATUS_ERROR
 };
+
+// ---------------------------------------------------------------------------
+// RGB LED helpers (requires WriteStatus above)
+// ---------------------------------------------------------------------------
+static void _ledColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0)
+{
+    ledcWrite(_LED_CH_R, 255 - r);
+    ledcWrite(_LED_CH_G, 255 - g);
+    ledcWrite(_LED_CH_B, 255 - b);
+    ledcWrite(_LED_CH_W, 255 - w);
+}
+
+static void _ledApplyStatus(WriteStatus s)
+{
+    switch (s)
+    {
+    case STATUS_IDLE:    _ledColor(0,   0,  40,  0); break;  // dim blue
+    case STATUS_WRITING: _ledColor(255,100,   0, 30); break;  // orange + white glow
+    case STATUS_SUCCESS: _ledColor(0,  200,   0,  0); break;  // green
+    case STATUS_ERROR:   _ledColor(200,  0,   0,  0); break;  // red
+    }
+}
 
 // Colours (RGB565)
 #define CLR_HEADER_BG  0x0319  // Dark navy
@@ -56,8 +114,10 @@ extern IPAddress Server_IP;
 // ---------------------------------------------------------------------------
 static TFT_eSPI* _tft = nullptr;             // created in displayInit(), not at global scope
 static uint8_t   _currentPage    = 0;        // 0 = spool info, 1 = network
+static const uint8_t _totalPages = 2;
 static WriteStatus _rfidStatus   = STATUS_IDLE;
 static unsigned long _statusUntil = 0;       // millis() when status resets
+static unsigned long _lastTbEvent = 0;       // trackball debounce
 
 // Parsed spool fields kept for display (char arrays avoid heap alloc during static init)
 static char _dMaterial[8]  = "--";
@@ -112,17 +172,33 @@ static void _parseSpoolData(const String &s)
 static void _drawHeader()
 {
     _tft->fillRect(0, 0, 320, 35, CLR_HEADER_BG);
+
+    // Left arrow (disabled on first page)
+    if (_currentPage > 0)
+    {
+        _tft->fillTriangle(8, 17, 20, 6, 20, 28, CLR_ACCENT);
+    }
+
+    // Page title (centred between arrows)
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
     _tft->setTextFont(4);
-    _tft->setCursor(8, 6);
-    _tft->print(_currentPage == 0 ? "K2 RFID Writer" : "Netwerk Info");
+    const char* titles[] = { "K2 RFID Writer", "Netwerk Info" };
+    int16_t tw = _tft->textWidth(titles[_currentPage]);
+    _tft->setCursor((320 - tw) / 2, 6);
+    _tft->print(titles[_currentPage]);
 
-    // Page-switch button (top-right)
-    _tft->fillRoundRect(248, 3, 68, 28, 5, CLR_ACCENT);
-    _tft->setTextColor(TFT_WHITE, CLR_ACCENT);
-    _tft->setTextFont(2);
-    _tft->setCursor(252, 10);
-    _tft->print(_currentPage == 0 ? " NET >" : "< INFO");
+    // Right arrow (disabled on last page)
+    if (_currentPage < _totalPages - 1)
+    {
+        _tft->fillTriangle(312, 17, 300, 6, 300, 28, CLR_ACCENT);
+    }
+
+    // Page dots bottom-right
+    for (uint8_t i = 0; i < _totalPages; i++)
+    {
+        uint16_t col = (i == _currentPage) ? TFT_WHITE : CLR_LABEL;
+        _tft->fillCircle(295 + i * 10, 28, 3, col);
+    }
 }
 
 static void _drawFooter()
@@ -266,6 +342,24 @@ void displayInit()
     pinMode(9, OUTPUT);
     digitalWrite(9, HIGH);
 
+    // Trackball inputs (HW-204, active LOW)
+    uint8_t tbPins[] = { _TB_UP, _TB_DOWN, _TB_LEFT, _TB_RIGHT, _TB_CLICK };
+    for (uint8_t p : tbPins) pinMode(p, INPUT_PULLUP);
+
+    // RGB+W LED – LEDC PWM (common anode, active LOW)
+    ledcSetup(_LED_CH_R, _LED_FREQ, _LED_RES);
+    ledcSetup(_LED_CH_G, _LED_FREQ, _LED_RES);
+    ledcSetup(_LED_CH_B, _LED_FREQ, _LED_RES);
+    ledcSetup(_LED_CH_W, _LED_FREQ, _LED_RES);
+    ledcAttachPin(_LED_R_PIN, _LED_CH_R);
+    ledcAttachPin(_LED_G_PIN, _LED_CH_G);
+    ledcAttachPin(_LED_B_PIN, _LED_CH_B);
+    ledcAttachPin(_LED_W_PIN, _LED_CH_W);
+    // Boot flash: white for 300 ms, then switch to idle blue
+    _ledColor(0, 0, 0, 255);
+    delay(300);
+    _ledApplyStatus(STATUS_IDLE);
+
     _tft = new TFT_eSPI();
     _tft->init();
     _tft->setRotation(1); // landscape: 320 wide x 240 tall
@@ -291,21 +385,56 @@ void displayUpdateSpool(const String &spool)
 void displaySetStatus(WriteStatus status)
 {
     _rfidStatus = status;
+    _ledApplyStatus(status);
     if (status == STATUS_SUCCESS || status == STATUS_ERROR)
         _statusUntil = millis() + 3000; // auto-revert to idle after 3 s
     if (_currentPage == 0)
         _drawStatusBar();
 }
 
-// Call from loop() – handles timed status reset
+// Call from loop() – handles trackball navigation and timed status reset
 void displayLoop()
 {
-    // Auto-reset status after timeout
+    // Auto-reset status bar after timeout
     if (_statusUntil > 0 && millis() > _statusUntil)
     {
         _statusUntil = 0;
         _rfidStatus  = STATUS_IDLE;
+        _ledApplyStatus(STATUS_IDLE);
         if (_currentPage == 0)
             _drawStatusBar();
+    }
+
+    // Trackball – debounced, active LOW
+    if (millis() - _lastTbEvent < _TB_DEBOUNCE_MS) return;
+
+    bool left  = !digitalRead(_TB_LEFT);
+    bool right = !digitalRead(_TB_RIGHT);
+    bool click = !digitalRead(_TB_CLICK);
+
+    if (left || right || click)
+    {
+        _lastTbEvent = millis();
+        int8_t dir = 0;
+        if (left)        dir = -1;
+        else if (right)  dir =  1;
+        else if (click)  dir =  1;  // click advances page
+
+        int8_t next = (int8_t)_currentPage + dir;
+        if (next < 0)              next = _totalPages - 1;
+        if (next >= _totalPages)   next = 0;
+
+        _currentPage = (uint8_t)next;
+        _drawHeader();
+        if (_currentPage == 0)
+        {
+            _drawMainPage();
+            _drawFooter();
+        }
+        else
+        {
+            _drawNetworkPage();
+            _drawFooter();
+        }
     }
 }

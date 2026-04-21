@@ -52,10 +52,11 @@ ESP32-S3 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-
 | R (LED rood) | GPIO39 | Status-LED rood |
 | G (LED groen) | GPIO40 | Status-LED groen |
 | B (LED blauw) | GPIO41 | Status-LED blauw |
+| WHT (LED wit) | GPIO4 | Status-LED wit |
 | VCC | 3.3V | |
 | GND | GND | |
 
-> De RGB LED is common-anode (actief laag). Sluit VCC aan op 3,3V.
+> De RGB+W LED is common-anode (actief laag). Sluit VCC aan op 3,3V.
 
 ### Buzzer / Speaker
 
@@ -70,8 +71,9 @@ ESP32-S3 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-
 
 | Status | Kleur |
 |---|---|
+| Boot | Wit (300ms flash) |
 | Wacht op RFID-kaart | Dim blauw |
-| Schrijven naar kaart | Oranje |
+| Schrijven naar kaart | Oranje + wit gloed |
 | Schrijven gelukt | Groen |
 | Fout | Rood |
 
@@ -79,7 +81,7 @@ ESP32-S3 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-
 
 ## Vrije GPIO's
 
-GPIO4, 10, 11, 12, 13, 18, 19, 20, 35, 36, 37, 42, 43, 44  
+GPIO10, 11, 12, 13, 18, 19, 20, 35, 36, 37, 42, 43, 44  
 GPIO48 = ingebouwde WS2812 RGB LED op de DevKit
 
 ---
