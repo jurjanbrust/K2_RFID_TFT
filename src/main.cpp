@@ -9,7 +9,7 @@
 #include <esp_task_wdt.h>
 #include "includes.h"
 
-#define SS_PIN 5
+#define SS_PIN 17
 #define RST_PIN 16   // Moved from GPIO21 (conflicts with TFT RST) – reconnect wire to GPIO16
 #define SPK_PIN 38   // GPIO27 does not exist on ESP32-S3; use GPIO38
 

@@ -35,7 +35,7 @@ ESP32-S3 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-
 | SCK | GPIO3 *(gedeeld met display)* |
 | MOSI | GPIO45 *(gedeeld met display)* |
 | MISO | GPIO46 *(gedeeld met display)* |
-| SDA/SS | GPIO5 |
+| SDA/SS | GPIO17 |
 | RST | GPIO16 |
 | VCC | 3.3V |
 | GND | GND |
@@ -47,7 +47,7 @@ ESP32-S3 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-
 | UP | GPIO6 | Omhoog |
 | DOWN | GPIO7 | Omlaag |
 | LEFT | GPIO15 | Vorige pagina |
-| RIGHT | GPIO17 | Volgende pagina |
+| RIGHT | GPIO5 | Volgende pagina |
 | CLICK (SW) | GPIO8 | Volgende pagina |
 | R (LED rood) | GPIO39 | Status-LED rood |
 | G (LED groen) | GPIO40 | Status-LED groen |

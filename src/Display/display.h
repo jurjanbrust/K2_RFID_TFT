@@ -16,7 +16,7 @@
 //
 // HW-204 Trackball  (5x digital, active LOW, internal pull-up):
 //   UP    GPIO6    DOWN  GPIO7
-//   LEFT  GPIO15   RIGHT GPIO17
+//   LEFT  GPIO15   RIGHT GPIO5
 //   CLICK GPIO8
 //
 // HW-204 RGB LED  (common anode, active LOW, PWM):
@@ -33,7 +33,7 @@
 #define _TB_UP     6
 #define _TB_DOWN   7
 #define _TB_LEFT  15
-#define _TB_RIGHT 17
+#define _TB_RIGHT  5
 #define _TB_CLICK  8
 
 #define _TB_DEBOUNCE_MS  200   // minimum ms between direction events
