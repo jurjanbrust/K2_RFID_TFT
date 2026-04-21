@@ -6,11 +6,12 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <LittleFS.h>
+#include <esp_task_wdt.h>
 #include "includes.h"
 
 #define SS_PIN 5
-#define RST_PIN 21
-#define SPK_PIN 27
+#define RST_PIN 16   // Moved from GPIO21 (conflicts with TFT RST) – reconnect wire to GPIO16
+#define SPK_PIN 38   // GPIO27 does not exist on ESP32-S3; use GPIO38
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
@@ -51,10 +52,37 @@ bool instr(String str, String search);
 
 void setup()
 {
+  Serial.begin(115200);
+  // Wait up to 3 s for USB-CDC host to connect; continue anyway
+  unsigned long t0 = millis();
+  while (!Serial && millis() - t0 < 3000) { delay(10); }
+  Serial.println();
+  Serial.println("[K2] === K2 RFID Writer booting ===");
+  Serial.println("[K2] setup start");
+
   LittleFS.begin(true);
+  Serial.println("[K2] LittleFS OK");
   loadConfig();
-  SPI.begin();
+  Serial.println("[K2] config loaded");
+
+  // Disable task watchdog during hardware init – some peripherals can be slow
+  esp_task_wdt_deinit();
+
+  // Start SPI2 (HSPI) bus on the TFT pins – both TFT_eSPI and MFRC522 share this bus
+  SPI.begin(3, 46, 45, -1);  // SCK=GPIO3, MISO=GPIO46, MOSI=GPIO45
+  Serial.println("[K2] SPI OK");
+
+  // Initialise display (TFT_eSPI reuses the SPI2 bus started above)
+  Serial.println("[K2] display init...");
+  displayInit();
+  Serial.println("[K2] display OK");
+
+  Serial.println("[K2] MFRC522 init...");
   mfrc522.PCD_Init();
+  // Print firmware version to confirm communication
+  byte v = mfrc522.PCD_ReadRegister(MFRC522::VersionReg);
+  Serial.printf("[K2] MFRC522 version: 0x%02X %s\n", v,
+                (v == 0x91 || v == 0x92) ? "(OK)" : "(not detected – check wiring)");
   key = {255, 255, 255, 255, 255, 255};
   pinMode(SPK_PIN, OUTPUT);
   if (AP_SSID == "" || AP_PASS == "")
@@ -65,16 +93,26 @@ void setup()
   WiFi.softAPConfig(Server_IP, Server_IP, Subnet_Mask);
   WiFi.softAP(AP_SSID.c_str(), AP_PASS.c_str());
   WiFi.softAPConfig(Server_IP, Server_IP, Subnet_Mask);
+  Serial.println("[K2] AP started: " + AP_SSID + "  IP: " + Server_IP.toString());
 
   if (WIFI_SSID != "" && WIFI_PASS != "")
   {
+    Serial.println("[K2] Connecting to WiFi: " + WIFI_SSID);
     WiFi.setAutoReconnect(true);
     WiFi.hostname(WIFI_HOSTNAME);
     WiFi.begin(WIFI_SSID.c_str(), WIFI_PASS.c_str());
-    if (WiFi.waitForConnectResult() == WL_CONNECTED)
+    // Use a manual timeout loop so the watchdog is fed during the wait
+    unsigned long wt = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - wt < 10000)
     {
-      IPAddress LAN_IP = WiFi.localIP();
+      delay(200);
+      Serial.print(".");
     }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED)
+      Serial.println("[K2] WiFi OK  LAN IP: " + WiFi.localIP().toString());
+    else
+      Serial.println("[K2] WiFi FAILED (continuing)");
   }
   if (WIFI_HOSTNAME != "")
   {
@@ -105,12 +143,15 @@ void setup()
   });
   webServer.onNotFound(handle404);
   webServer.begin();
+  Serial.println("[K2] webServer OK");
+  Serial.println("[K2] === boot complete ===");
 }
 
 
 void loop()
 {
   webServer.handleClient();
+  displayLoop();
   if (!mfrc522.PICC_IsNewCardPresent())
     return;
 
@@ -140,6 +181,7 @@ void loop()
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &ekey, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK)
     {
+      displaySetStatus(STATUS_ERROR);
       tone(SPK_PIN, 400, 150);
       delay(300);
       tone(SPK_PIN, 400, 150);
@@ -148,6 +190,8 @@ void loop()
     }
     encrypted = true;
   }
+
+  displaySetStatus(STATUS_WRITING);
 
   byte blockData[17];
   byte encData[16];
@@ -184,6 +228,7 @@ void loop()
 
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
+  displaySetStatus(STATUS_SUCCESS);
   tone(SPK_PIN, 1000, 200);
   delay(2000);
 }
@@ -416,6 +461,7 @@ void handleSpoolData()
       file.print(spoolData);
       file.close();
     }
+    displayUpdateSpool(spoolData);
     String htmStr = "OK";
     webServer.setContentLength(htmStr.length());
     webServer.send(200, "text/plain", htmStr);
