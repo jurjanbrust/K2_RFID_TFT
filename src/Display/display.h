@@ -7,11 +7,13 @@
 // ---------------------------------------------------------------------------
 // Hardware layout  –  UICPAL ESP32-S3-N16R8 DevKit
 //
-// Display  (ILI9341, hardware SPI2, 240×320, landscape = 320×240):
+// Display  (ST7796S, hardware SPI2, 320×480 native, landscape = 480×320):
 //   LCD_CLK  GPIO3   LCD_MOSI GPIO45  LCD_MISO GPIO46
 //   LCD_CS   GPIO14  LCD_DC   GPIO47  LCD_RST  GPIO21
 //   LCD_BL   GPIO9   (HIGH = on)
 //
+// Touch  (XPT2046, hardware SPI2, TOUCH_CS=GPIO1):
+//   T_IRQ not connected  –  touch via _tft->getTouch()
 // NOTE: MFRC522 RST moved to GPIO16 to free GPIO21 for TFT RST.
 //
 // HW-204 Trackball  (5x digital, active LOW, internal pull-up):
@@ -20,12 +22,18 @@
 //   CLICK GPIO8
 //
 // HW-204 RGB LED  (common anode, active LOW, PWM):
-//   R  GPIO39   G  GPIO40   B  GPIO41
+//   R  GPIO39   G  GPIO40   B  GPIO41   W  GPIO4
 //
 // Status colours:
-//   IDLE    → dim blue   WRITING → orange
+//   IDLE    → dim blue   WRITING → orange + white glow
 //   SUCCESS → green      ERROR   → red
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Screen dimensions (landscape 480 × 320)
+// ---------------------------------------------------------------------------
+#define _SCR_W  480
+#define _SCR_H  320
 
 // ---------------------------------------------------------------------------
 // HW-204 Trackball pin definitions
@@ -54,11 +62,11 @@
 #define _LED_RES    8    // 8-bit (0-255)
 
 // ---------------------------------------------------------------------------
-// Screen layout  (landscape 320 × 240)
-//   Header  y=  0  h=35
-//   Body    y= 35  h=110  (4 rows × 27px)
-//   Status  y=145  h=65
-//   Footer  y=210  h=30
+// Screen layout  (landscape 480 × 320)
+//   Header  y=  0  h=48
+//   Body    y= 48  h=152  (4 rows × 38px)
+//   Status  y=200  h=80
+//   Footer  y=280  h=40
 // ---------------------------------------------------------------------------
 
 // Status of the last RFID write operation
@@ -112,12 +120,14 @@ extern IPAddress Server_IP;
 // ---------------------------------------------------------------------------
 // Module-level state
 // ---------------------------------------------------------------------------
-static TFT_eSPI* _tft = nullptr;             // created in displayInit(), not at global scope
-static uint8_t   _currentPage    = 0;        // 0 = spool info, 1 = network
+static TFT_eSPI* _tft = nullptr;
+static uint8_t   _currentPage   
+static uint8_t   _currentPage    = 0;
 static const uint8_t _totalPages = 2;
 static WriteStatus _rfidStatus   = STATUS_IDLE;
-static unsigned long _statusUntil = 0;       // millis() when status resets
-static unsigned long _lastTbEvent = 0;       // trackball debounce
+static unsigned long _statusUntil = 0;
+static unsigned long _lastTbEvent = 0;   // trackball debounce
+static unsigned long _lastTouch   = 0;   // touche
 
 // Parsed spool fields kept for display (char arrays avoid heap alloc during static init)
 static char _dMaterial[8]  = "--";
@@ -171,55 +181,39 @@ static void _parseSpoolData(const String &s)
 // ---------------------------------------------------------------------------
 static void _drawHeader()
 {
-    _tft->fillRect(0, 0, 320, 35, CLR_HEADER_BG);
+    _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
 
-    // Left arrow (disabled on first page)
     if (_currentPage > 0)
-    {
-        _tft->fillTriangle(8, 17, 20, 6, 20, 28, CLR_ACCENT);
-    }
+        _tft->fillTriangle(10, 24, 26, 8, 26, 40, CLR_ACCENT);
 
-    // Page title (centred between arrows)
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
     _tft->setTextFont(4);
     const char* titles[] = { "K2 RFID Writer", "Netwerk Info" };
     int16_t tw = _tft->textWidth(titles[_currentPage]);
-    _tft->setCursor((320 - tw) / 2, 6);
+    _tft->setCursor((480 - tw) / 2, 8);
     _tft->print(titles[_currentPage]);
 
-    // Right arrow (disabled on last page)
     if (_currentPage < _totalPages - 1)
-    {
-        _tft->fillTriangle(312, 17, 300, 6, 300, 28, CLR_ACCENT);
-    }
+        _tft->fillTriangle(470, 24, 454, 8, 454, 40, CLR_ACCENT);
 
-    // Page dots bottom-right
     for (uint8_t i = 0; i < _totalPages; i++)
     {
         uint16_t col = (i == _currentPage) ? TFT_WHITE : CLR_LABEL;
-        _tft->fillCircle(295 + i * 10, 28, 3, col);
-    }
-}
-
-static void _drawFooter()
-{
-    _tft->fillRect(0, 210, 320, 30, CLR_HEADER_BG);
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(5, 218);
+        _tft->fillCircle(452 + i * 14, 40, 4_BG);
+    _tft->setCursor(8, 291);
     _tft->print("AP: ");
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
     _tft->print(AP_SSID);
     _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(165, 218);
-    _tft->print("IP: ");
+    _tft->setCursor(25080, 480, 40, CLR_HEADER_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
+    _tft->setCursor(8, 291);
+    _tft->print("AP: ");
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
-    _tft->print(Server_IP.toString());
-}
-
-static void _drawStatusBar()
-{
-    uint16_t bg;
+    _tft->print(AP_SSID);
+    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
+    _tft->setCursor(250, 291
     String   msg;
     switch (_rfidStatus)
     {
@@ -240,21 +234,29 @@ static void _drawStatusBar()
         msg = "  Fout! Probeer opnieuw.";
         break;
     }
-    _tft->fillRect(0, 145, 320, 65, bg);
+    _tft->fillRect(0, 200, 480, 80, bg);
     _tft->setTextColor(TFT_WHITE, bg);
-    _tft->setTextFont(2);
-    _tft->setCursor(5, 158);
+    _tft->setTextFont(4);
+    _tft->setCursor(10, 220);
     _tft->print(msg);
 }
 
 static void _drawMainPage()
-{
-    _tft->fillRect(0, 35, 320, 110, CLR_BODY_BG);
+{200, 480, 80, bg);
+    _tft->setTextColor(TFT_WHITE, bg);
+    _tft->setTextFont(4);
+    _tft->setCursor(10, 220
+    const int valueX = 200;
+    const int rowH   = 38;
+    int y = 52;
 
-    const int labelX = 5;
-    const int valueX = 120;
-    const int rowH   = 27;
-    int y = 38;
+    struct { const char *label; } rows[] = {
+        {"Materiaal:"}48, 480, 152, CLR_BODY_BG);
+
+    const int labelX = 10;
+    const int valueX = 200;
+    const int rowH   = 38;
+    int y = 52;
 
     struct { const char *label; } rows[] = {
         {"Materiaal:"},
@@ -267,60 +269,60 @@ static void _drawMainPage()
     for (int i = 0; i < 4; i++)
     {
         _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-        _tft->setCursor(labelX, y + 8);
+        _tft->setCursor(labelX, y + 10);
         _tft->print(rows[i].label);
         y += rowH;
     }
 
-    y = 38;
-    _tft->setTextFont(2);
+    y = 52;
+    _tft->setTextFont(4);
     _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
 
     // Materiaal
-    _tft->setCursor(valueX, y + 2);
+    _tft->setCursor(valueX, y + 4);
     _tft->print(_dMaterial);
     y += rowH;
 
     // Kleur – swatch + hex code
     uint16_t swatchColor = _hexToRGB565(_dColor);
-    _tft->fillRect(valueX, y + 3, 20, 18, swatchColor);
-    _tft->drawRect(valueX, y + 3, 20, 18, TFT_WHITE);
-    _tft->setCursor(valueX + 24, y + 7);
+    _tft->fillRect(valueX, y + 4, 28, 26, swatchColor);
+    _tft->drawRect(valueX, y + 4, 28, 26, TFT_WHITE);
+    _tft->setTextFont(2);
+    _tft->setCursor(valueX + 36, y + 12);
     _tft->print("#");
     _tft->print(_dColor);
     y += rowH;
 
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+
     // Gewicht
-    _tft->setCursor(valueX, y + 2);
+    _tft->setCursor(valueX, y + 4);
     _tft->print(_dWeight);
     y += rowH;
 
     // Volgnummer
-    _tft->setCursor(valueX, y + 2);
-    _tft->print(_dSerial);
-
-    _drawStatusBar();
-}
+    _tft->setCursor(valueX, y + 4
 
 static void _drawNetworkPage()
 {
-    _tft->fillRect(0, 35, 320, 175, CLR_BODY_BG);
+    _tft->fillRect(0, 48, 480, 232, CLR_BODY_BG);
 
-    const int labelX = 5;
-    const int valueX = 110;
-    const int rowH   = 34;
-    int y = 40;
+    const int labelX = 10;
+    const int valueX = 180;
+    const int rowH   =48, 480, 232, CLR_BODY_BG);
+
+    const int labelX = 10;
+    const int valueX = 180;
+    const int rowH   = 44;
+    int y = 55;
 
     auto row = [&](const char *label, const String &value) {
-        _tft->setTextFont(1);
-        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-        _tft->setCursor(labelX, y + 5);
-        _tft->print(label);
         _tft->setTextFont(2);
-        _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
-        _tft->setCursor(valueX, y + 2);
-        _tft->print(value);
-        y += rowH;
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(labelX, y + 8);
+        _tft->print(label);
+        _tft->setTextFont(4
     };
 
     IPAddress lanIP = WiFi.localIP();
@@ -362,11 +364,11 @@ void displayInit()
 
     _tft = new TFT_eSPI();
     _tft->init();
-    _tft->setRotation(1); // landscape: 320 wide x 240 tall
+    _tft->setRotation(3); // landscape 480×320 – rotation 3 corrects flip vs rotation 1
     _tft->fillScreen(TFT_BLACK);
     _parseSpoolData(spoolData);
     _drawHeader();
-    _drawMainPage();
+    _drawMainPage();3); // landscape 480×320 – rotation 3 corrects flip vs rotation 1
     _drawFooter();
 }
 
@@ -418,23 +420,49 @@ void displayLoop()
         int8_t dir = 0;
         if (left)        dir = -1;
         else if (right)  dir =  1;
-        else if (click)  dir =  1;  // click advances page
+        else if (click)  dir =  1;
 
         int8_t next = (int8_t)_currentPage + dir;
-        if (next < 0)              next = _totalPages - 1;
-        if (next >= _totalPages)   next = 0;
+        if (next < 0)            next = _totalPages - 1;
+        if (next >= _totalPages) n
+
+        int8_t next = (int8_t)_currentPage + dir;
+        if (next < 0)            next = _totalPages - 1;
+        if (next >= _totalPages) next = 0;
 
         _currentPage = (uint8_t)next;
         _drawHeader();
-        if (_currentPage == 0)
+        if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+        else                   { _drawNetworkPage(); _drawFooter(); }
+    }
+
+    // Touch – tap right arrow area or left arrow area
+    uint16_t tx, ty;
+    if (_tft->getTouch(&tx, &ty) && (millis() - _lastTouch > 600))
+    {
+        _lastTouch = millis();
+        if      (tx > 440)  // right side
         {
-            _drawMainPage();
-            _drawFooter();
+            _currentPage = (_currentPage + 1) % _totalPages;
+            _drawHeader();
+            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+            else                   { _drawNetworkPage(); _drawFooter(); }
         }
-        else
+        else if (tx < 40)   // left side
         {
-            _drawNetworkPage();
-            _drawFooter();
+            _currentPage = (_currentPage == 0) ? _totalPages - 1 : _currentPage - 1;
+            _drawHeader();
+            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+            else                   { _drawNetworkPage(); _drawFooter(); }
+            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+            else                   { _drawNetworkPage(); _drawFooter(); }
+        }
+        else if (tx < 40)   // left side
+        {
+            _currentPage = (_currentPage == 0) ? _totalPages - 1 : _currentPage - 1;
+            _drawHeader();
+            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+            else                   { _drawNetworkPage(); _drawFooter(); }
         }
     }
 }
