@@ -12,8 +12,8 @@
 //   LCD_CS   GPIO14  LCD_DC   GPIO47  LCD_RST  GPIO21
 //   LCD_BL   GPIO9   (HIGH = on)
 //
-// Touch  (XPT2046, hardware SPI2, TOUCH_CS=GPIO1):
-//   T_IRQ not connected  –  touch via _tft->getTouch()
+// Touch  (XPT2046, same SPI2 bus, TOUCH_CS=GPIO1 via -DTOUCH_CS=1 in platformio.ini)
+//
 // NOTE: MFRC522 RST moved to GPIO16 to free GPIO21 for TFT RST.
 //
 // HW-204 Trackball  (5x digital, active LOW, internal pull-up):
@@ -22,18 +22,12 @@
 //   CLICK GPIO8
 //
 // HW-204 RGB LED  (common anode, active LOW, PWM):
-//   R  GPIO39   G  GPIO40   B  GPIO41   W  GPIO4
+//   R  GPIO39   G  GPIO40   B  GPIO41
 //
 // Status colours:
-//   IDLE    → dim blue   WRITING → orange + white glow
+//   IDLE    → dim blue   WRITING → orange
 //   SUCCESS → green      ERROR   → red
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Screen dimensions (landscape 480 × 320)
-// ---------------------------------------------------------------------------
-#define _SCR_W  480
-#define _SCR_H  320
 
 // ---------------------------------------------------------------------------
 // HW-204 Trackball pin definitions
@@ -121,13 +115,12 @@ extern IPAddress Server_IP;
 // Module-level state
 // ---------------------------------------------------------------------------
 static TFT_eSPI* _tft = nullptr;
-static uint8_t   _currentPage   
 static uint8_t   _currentPage    = 0;
 static const uint8_t _totalPages = 2;
 static WriteStatus _rfidStatus   = STATUS_IDLE;
 static unsigned long _statusUntil = 0;
-static unsigned long _lastTbEvent = 0;   // trackball debounce
-static unsigned long _lastTouch   = 0;   // touche
+static unsigned long _lastTbEvent = 0;
+static unsigned long _lastTouch   = 0;
 
 // Parsed spool fields kept for display (char arrays avoid heap alloc during static init)
 static char _dMaterial[8]  = "--";
@@ -199,13 +192,13 @@ static void _drawHeader()
     for (uint8_t i = 0; i < _totalPages; i++)
     {
         uint16_t col = (i == _currentPage) ? TFT_WHITE : CLR_LABEL;
-        _tft->fillCircle(452 + i * 14, 40, 4_BG);
-    _tft->setCursor(8, 291);
-    _tft->print("AP: ");
-    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
-    _tft->print(AP_SSID);
-    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(25080, 480, 40, CLR_HEADER_BG);
+        _tft->fillCircle(452 + i * 14, 40, 4, col);
+    }
+}
+
+static void _drawFooter()
+{
+    _tft->fillRect(0, 280, 480, 40, CLR_HEADER_BG);
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
     _tft->setCursor(8, 291);
@@ -213,7 +206,15 @@ static void _drawHeader()
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
     _tft->print(AP_SSID);
     _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(250, 291
+    _tft->setCursor(250, 291);
+    _tft->print("IP: ");
+    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
+    _tft->print(Server_IP.toString());
+}
+
+static void _drawStatusBar()
+{
+    uint16_t bg;
     String   msg;
     switch (_rfidStatus)
     {
@@ -242,16 +243,8 @@ static void _drawHeader()
 }
 
 static void _drawMainPage()
-{200, 480, 80, bg);
-    _tft->setTextColor(TFT_WHITE, bg);
-    _tft->setTextFont(4);
-    _tft->setCursor(10, 220
-    const int valueX = 200;
-    const int rowH   = 38;
-    int y = 52;
-
-    struct { const char *label; } rows[] = {
-        {"Materiaal:"}48, 480, 152, CLR_BODY_BG);
+{
+    _tft->fillRect(0, 48, 480, 152, CLR_BODY_BG);
 
     const int labelX = 10;
     const int valueX = 200;
@@ -302,15 +295,15 @@ static void _drawMainPage()
     y += rowH;
 
     // Volgnummer
-    _tft->setCursor(valueX, y + 4
+    _tft->setCursor(valueX, y + 4);
+    _tft->print(_dSerial);
+
+    _drawStatusBar();
+}
 
 static void _drawNetworkPage()
 {
     _tft->fillRect(0, 48, 480, 232, CLR_BODY_BG);
-
-    const int labelX = 10;
-    const int valueX = 180;
-    const int rowH   =48, 480, 232, CLR_BODY_BG);
 
     const int labelX = 10;
     const int valueX = 180;
@@ -322,7 +315,11 @@ static void _drawNetworkPage()
         _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
         _tft->setCursor(labelX, y + 8);
         _tft->print(label);
-        _tft->setTextFont(4
+        _tft->setTextFont(4);
+        _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+        _tft->setCursor(valueX, y + 2);
+        _tft->print(value);
+        y += rowH;
     };
 
     IPAddress lanIP = WiFi.localIP();
@@ -368,7 +365,7 @@ void displayInit()
     _tft->fillScreen(TFT_BLACK);
     _parseSpoolData(spoolData);
     _drawHeader();
-    _drawMainPage();3); // landscape 480×320 – rotation 3 corrects flip vs rotation 1
+    _drawMainPage();
     _drawFooter();
 }
 
@@ -408,56 +405,44 @@ void displayLoop()
     }
 
     // Trackball – debounced, active LOW
-    if (millis() - _lastTbEvent < _TB_DEBOUNCE_MS) return;
-
-    bool left  = !digitalRead(_TB_LEFT);
-    bool right = !digitalRead(_TB_RIGHT);
-    bool click = !digitalRead(_TB_CLICK);
-
-    if (left || right || click)
+    if (millis() - _lastTbEvent >= _TB_DEBOUNCE_MS)
     {
-        _lastTbEvent = millis();
-        int8_t dir = 0;
-        if (left)        dir = -1;
-        else if (right)  dir =  1;
-        else if (click)  dir =  1;
+        bool left  = !digitalRead(_TB_LEFT);
+        bool right = !digitalRead(_TB_RIGHT);
+        bool click = !digitalRead(_TB_CLICK);
 
-        int8_t next = (int8_t)_currentPage + dir;
-        if (next < 0)            next = _totalPages - 1;
-        if (next >= _totalPages) n
+        if (left || right || click)
+        {
+            _lastTbEvent = millis();
+            int8_t dir = 0;
+            if (left)        dir = -1;
+            else if (right)  dir =  1;
+            else if (click)  dir =  1;
 
-        int8_t next = (int8_t)_currentPage + dir;
-        if (next < 0)            next = _totalPages - 1;
-        if (next >= _totalPages) next = 0;
+            int8_t next = (int8_t)_currentPage + dir;
+            if (next < 0)            next = _totalPages - 1;
+            if (next >= _totalPages) next = 0;
 
-        _currentPage = (uint8_t)next;
-        _drawHeader();
-        if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-        else                   { _drawNetworkPage(); _drawFooter(); }
+            _currentPage = (uint8_t)next;
+            _drawHeader();
+            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+            else                   { _drawNetworkPage(); _drawFooter(); }
+        }
     }
 
-    // Touch – tap right arrow area or left arrow area
+    // Touch – tap right area (>440px) or left area (<40px) to navigate pages
     uint16_t tx, ty;
     if (_tft->getTouch(&tx, &ty) && (millis() - _lastTouch > 600))
     {
         _lastTouch = millis();
-        if      (tx > 440)  // right side
+        if (tx > 440)
         {
             _currentPage = (_currentPage + 1) % _totalPages;
             _drawHeader();
             if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
             else                   { _drawNetworkPage(); _drawFooter(); }
         }
-        else if (tx < 40)   // left side
-        {
-            _currentPage = (_currentPage == 0) ? _totalPages - 1 : _currentPage - 1;
-            _drawHeader();
-            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-            else                   { _drawNetworkPage(); _drawFooter(); }
-            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-            else                   { _drawNetworkPage(); _drawFooter(); }
-        }
-        else if (tx < 40)   // left side
+        else if (tx < 40)
         {
             _currentPage = (_currentPage == 0) ? _totalPages - 1 : _currentPage - 1;
             _drawHeader();
