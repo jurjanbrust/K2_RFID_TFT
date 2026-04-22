@@ -127,6 +127,10 @@ void setup()
   webServer.on("/material_database.json", HTTP_GET, handleDb);
   webServer.on("/config", HTTP_POST, handleConfigP);
   webServer.on("/spooldata", HTTP_POST, handleSpoolData);
+  webServer.on("/calibrate", HTTP_GET, []() {
+      webServer.send(200, "text/plain", "Kalibratie gestart – raak de kruizen aan op het scherm.");
+      displayCalibrate();
+  });
   webServer.on("/update.html", HTTP_POST, []() {
     webServer.send(200, "text/plain", upMsg);
     delay(1000);
