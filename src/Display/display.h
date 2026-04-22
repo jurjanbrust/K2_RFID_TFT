@@ -3,6 +3,7 @@
 #include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <driver/ledc.h>
+#include <Preferences.h>
 
 // ---------------------------------------------------------------------------
 // Hardware layout  –  UICPAL ESP32-S3-N16R8 DevKit
@@ -13,15 +14,11 @@
 //   LCD_BL   GPIO9   (HIGH = on)
 //
 // Touch  (XPT2046, same SPI2 bus, TOUCH_CS=GPIO1 via -DTOUCH_CS=1 in platformio.ini)
+//   Calibration stored in NVS ("tft_cal"). Runs wizard on first boot.
 //
 // NOTE: MFRC522 RST moved to GPIO16 to free GPIO21 for TFT RST.
 //
-// HW-204 Trackball  (5x digital, active LOW, internal pull-up):
-//   UP    GPIO6    DOWN  GPIO7
-//   LEFT  GPIO15   RIGHT GPIO5
-//   CLICK GPIO8
-//
-// HW-204 RGB LED  (common anode, active LOW, PWM):
+// RGB LED  (common anode, active LOW, PWM):
 //   R  GPIO39   G  GPIO40   B  GPIO41
 //
 // Status colours:
@@ -30,28 +27,15 @@
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// HW-204 Trackball pin definitions
-// ---------------------------------------------------------------------------
-#define _TB_UP     6
-#define _TB_DOWN   7
-#define _TB_LEFT  15
-#define _TB_RIGHT  5
-#define _TB_CLICK  8
-
-#define _TB_DEBOUNCE_MS  200   // minimum ms between direction events
-
-// ---------------------------------------------------------------------------
-// HW-204 RGB LED (common anode – PWM value 0=full ON, 255=OFF)
+// RGB LED (common anode – PWM value 0=full ON, 255=OFF)
 // ---------------------------------------------------------------------------
 #define _LED_R_PIN  39
 #define _LED_G_PIN  40
 #define _LED_B_PIN  41
-#define _LED_W_PIN   4   // WHT – white LED inside trackball ball
 
 #define _LED_CH_R   0    // LEDC channels
 #define _LED_CH_G   1
 #define _LED_CH_B   2
-#define _LED_CH_W   3
 #define _LED_FREQ   5000
 #define _LED_RES    8    // 8-bit (0-255)
 
@@ -73,24 +57,23 @@ enum WriteStatus
 };
 
 // ---------------------------------------------------------------------------
-// RGB LED helpers (requires WriteStatus above)
+// RGB LED helpers
 // ---------------------------------------------------------------------------
-static void _ledColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0)
+static void _ledColor(uint8_t r, uint8_t g, uint8_t b)
 {
     ledcWrite(_LED_CH_R, 255 - r);
     ledcWrite(_LED_CH_G, 255 - g);
     ledcWrite(_LED_CH_B, 255 - b);
-    ledcWrite(_LED_CH_W, 255 - w);
 }
 
 static void _ledApplyStatus(WriteStatus s)
 {
     switch (s)
     {
-    case STATUS_IDLE:    _ledColor(0,   0,  40,  0); break;  // dim blue
-    case STATUS_WRITING: _ledColor(255,100,   0, 30); break;  // orange + white glow
-    case STATUS_SUCCESS: _ledColor(0,  200,   0,  0); break;  // green
-    case STATUS_ERROR:   _ledColor(200,  0,   0,  0); break;  // red
+    case STATUS_IDLE:    _ledColor(0,   0,  40); break;  // dim blue
+    case STATUS_WRITING: _ledColor(255,100,   0); break;  // orange
+    case STATUS_SUCCESS: _ledColor(0,  200,   0); break;  // green
+    case STATUS_ERROR:   _ledColor(200,  0,   0); break;  // red
     }
 }
 
@@ -119,14 +102,36 @@ static uint8_t   _currentPage    = 0;
 static const uint8_t _totalPages = 2;
 static WriteStatus _rfidStatus   = STATUS_IDLE;
 static unsigned long _statusUntil = 0;
-static unsigned long _lastTbEvent = 0;
 static unsigned long _lastTouch   = 0;
+static uint16_t  _touchCal[5]    = {0};
 
 // Parsed spool fields kept for display (char arrays avoid heap alloc during static init)
 static char _dMaterial[8]  = "--";
 static char _dColor[8]     = "000000";
 static char _dWeight[8]    = "1 KG";
 static char _dSerial[8]    = "------";
+
+// ---------------------------------------------------------------------------
+// Touch calibration helpers
+// ---------------------------------------------------------------------------
+static bool _loadTouchCal()
+{
+    Preferences prefs;
+    prefs.begin("tft_cal", true);
+    bool found = prefs.isKey("cal");
+    if (found) prefs.getBytes("cal", _touchCal, sizeof(_touchCal));
+    prefs.end();
+    if (found) _tft->setTouch(_touchCal);
+    return found;
+}
+
+static void _saveTouchCal()
+{
+    Preferences prefs;
+    prefs.begin("tft_cal", false);
+    prefs.putBytes("cal", _touchCal, sizeof(_touchCal));
+    prefs.end();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,17 +146,6 @@ static uint16_t _hexToRGB565(const String &hex)
     return _tft->color565(r, g, b);
 }
 
-// Parse spoolData string into display fields.
-// Format: "AB124" + vendor(4) + "A2" + "1"+type(2) + "0"+color(6)
-//          + len(4) + serial(6) + reserve(6) + "00000000"
-// Offsets (0-based):
-//   0-4   : "AB124"
-//   5-8   : vendorId
-//   9-10  : "A2"
-//   11-13 : filamentId  ("1" + 2-char type)
-//   14-20 : color       ("0" + 6-char hex)
-//   21-24 : filamentLen
-//   25-30 : serialNum
 static void _parseSpoolData(const String &s)
 {
     if (s.length() < 31)
@@ -334,6 +328,26 @@ static void _drawNetworkPage()
 // Public API
 // ---------------------------------------------------------------------------
 
+// Run the 4-point touch calibration wizard and store the result in NVS.
+// Call manually to recalibrate (e.g. via web endpoint).
+void displayCalibrate()
+{
+    _tft->fillScreen(TFT_BLACK);
+    _tft->setTextDatum(MC_DATUM);
+    _tft->setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft->drawString("Raak de kruizen aan", 240, 140, 4);
+    _tft->drawString("om het scherm te kalibreren", 240, 175, 2);
+    delay(1500);
+    _tft->calibrateTouch(_touchCal, TFT_WHITE, TFT_BLACK, 15);
+    _saveTouchCal();
+    // Redraw normal UI
+    _tft->fillScreen(TFT_BLACK);
+    _tft->setTextDatum(TL_DATUM);
+    _drawHeader();
+    if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+    else                   { _drawNetworkPage(); _drawFooter(); }
+}
+
 // Call once from setup()
 void displayInit()
 {
@@ -341,35 +355,37 @@ void displayInit()
     pinMode(9, OUTPUT);
     digitalWrite(9, HIGH);
 
-    // Trackball inputs (HW-204, active LOW)
-    uint8_t tbPins[] = { _TB_UP, _TB_DOWN, _TB_LEFT, _TB_RIGHT, _TB_CLICK };
-    for (uint8_t p : tbPins) pinMode(p, INPUT_PULLUP);
-
-    // RGB+W LED – LEDC PWM (common anode, active LOW)
+    // RGB LED – LEDC PWM (common anode, active LOW)
     ledcSetup(_LED_CH_R, _LED_FREQ, _LED_RES);
     ledcSetup(_LED_CH_G, _LED_FREQ, _LED_RES);
     ledcSetup(_LED_CH_B, _LED_FREQ, _LED_RES);
-    ledcSetup(_LED_CH_W, _LED_FREQ, _LED_RES);
     ledcAttachPin(_LED_R_PIN, _LED_CH_R);
     ledcAttachPin(_LED_G_PIN, _LED_CH_G);
     ledcAttachPin(_LED_B_PIN, _LED_CH_B);
-    ledcAttachPin(_LED_W_PIN, _LED_CH_W);
     // Boot flash: white for 300 ms, then switch to idle blue
-    _ledColor(0, 0, 0, 255);
+    _ledColor(255, 255, 255);
     delay(300);
     _ledApplyStatus(STATUS_IDLE);
 
     _tft = new TFT_eSPI();
     _tft->init();
-    _tft->setRotation(3); // landscape 480×320 – rotation 3 corrects flip vs rotation 1
+    _tft->setRotation(3); // landscape 480×320
     _tft->fillScreen(TFT_BLACK);
+
     _parseSpoolData(spoolData);
-    _drawHeader();
-    _drawMainPage();
-    _drawFooter();
+
+    // Load touch calibration; run wizard if not yet stored
+    if (!_loadTouchCal())
+        displayCalibrate();
+    else
+    {
+        _drawHeader();
+        _drawMainPage();
+        _drawFooter();
+    }
 }
 
-// Call after spoolData is updated (web or touch) to refresh spool fields
+// Call after spoolData is updated to refresh spool fields
 void displayUpdateSpool(const String &spool)
 {
     _parseSpoolData(spool);
@@ -386,12 +402,12 @@ void displaySetStatus(WriteStatus status)
     _rfidStatus = status;
     _ledApplyStatus(status);
     if (status == STATUS_SUCCESS || status == STATUS_ERROR)
-        _statusUntil = millis() + 3000; // auto-revert to idle after 3 s
+        _statusUntil = millis() + 3000;
     if (_currentPage == 0)
         _drawStatusBar();
 }
 
-// Call from loop() – handles trackball navigation and timed status reset
+// Call from loop() – handles touch navigation and timed status reset
 void displayLoop()
 {
     // Auto-reset status bar after timeout
@@ -404,33 +420,7 @@ void displayLoop()
             _drawStatusBar();
     }
 
-    // Trackball – debounced, active LOW
-    if (millis() - _lastTbEvent >= _TB_DEBOUNCE_MS)
-    {
-        bool left  = !digitalRead(_TB_LEFT);
-        bool right = !digitalRead(_TB_RIGHT);
-        bool click = !digitalRead(_TB_CLICK);
-
-        if (left || right || click)
-        {
-            _lastTbEvent = millis();
-            int8_t dir = 0;
-            if (left)        dir = -1;
-            else if (right)  dir =  1;
-            else if (click)  dir =  1;
-
-            int8_t next = (int8_t)_currentPage + dir;
-            if (next < 0)            next = _totalPages - 1;
-            if (next >= _totalPages) next = 0;
-
-            _currentPage = (uint8_t)next;
-            _drawHeader();
-            if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-            else                   { _drawNetworkPage(); _drawFooter(); }
-        }
-    }
-
-    // Touch – tap right area (>440px) or left area (<40px) to navigate pages
+    // Touch – tap right arrow area (>440px) or left arrow area (<40px)
     uint16_t tx, ty;
     if (_tft->getTouch(&tx, &ty) && (millis() - _lastTouch > 600))
     {
