@@ -1,7 +1,6 @@
 #pragma once
 
 #include <TFT_eSPI.h>
-#include <WiFi.h>
 #include <Preferences.h>
 
 // ---------------------------------------------------------------------------
@@ -60,11 +59,7 @@ enum WriteStatus
 #define CLR_WRITING_BG 0x8420
 #define CLR_IDLE_BG    0x2104
 
-extern String    spoolData;
-extern String    AP_SSID;
-extern String    WIFI_SSID;
-extern String    WIFI_HOSTNAME;
-extern IPAddress Server_IP;
+extern String spoolData;
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -280,71 +275,6 @@ static void _initSelections()
 // ---------------------------------------------------------------------------
 // Drawing primitives
 // ---------------------------------------------------------------------------
-static void _drawHeader()
-{
-    _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
-
-    // Page 1: show "Home" text at safe x (left dead zone is ~top-left corner)
-    if (_currentPage > 0)
-    {
-        _tft->setTextFont(2);
-        _tft->setTextColor(CLR_ACCENT, CLR_HEADER_BG);
-        _tft->setCursor(200, 18);
-        _tft->print("<< Home");
-    }
-
-    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
-    _tft->setTextFont(4);
-    const char* titles[] = { "K2 RFID Writer", "Netwerk Info" };
-    int16_t tw = _tft->textWidth(titles[_currentPage]);
-    _tft->setCursor((480 - tw) / 2, 8);
-    _tft->print(titles[_currentPage]);
-
-    // Right arrow only on page 0 (page 1 uses "Home" text above)
-    if (_currentPage < _totalPages - 1)
-        _tft->fillTriangle(470, 24, 454, 8, 454, 40, CLR_ACCENT);
-
-    for (uint8_t i = 0; i < _totalPages; i++)
-    {
-        uint16_t col = (i == _currentPage) ? TFT_WHITE : CLR_LABEL;
-        _tft->fillCircle(452 + i * 14, 40, 4, col);
-    }
-}
-
-static void _drawFooter()
-{
-    _tft->fillRect(0, 280, 480, 40, CLR_HEADER_BG);
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(8, 291);
-    _tft->print("AP: ");
-    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
-    _tft->print(AP_SSID);
-    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
-    _tft->setCursor(250, 291);
-    _tft->print("IP: ");
-    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
-    _tft->print(Server_IP.toString());
-}
-
-static void _drawStatusBar()
-{
-    uint16_t bg;
-    String   msg;
-    switch (_rfidStatus)
-    {
-    case STATUS_IDLE:    bg = CLR_IDLE_BG;    msg = "  Wacht op RFID kaart...";    break;
-    case STATUS_WRITING: bg = CLR_WRITING_BG; msg = "  Schrijven naar kaart..."; break;
-    case STATUS_SUCCESS: bg = CLR_SUCCESS_BG; msg = "  Gelukt! Kaart verwijderen."; break;
-    case STATUS_ERROR:   bg = CLR_ERROR_BG;   msg = "  Fout! Probeer opnieuw.";  break;
-    }
-    _tft->fillRect(0, 200, 480, 80, bg);
-    _tft->setTextColor(TFT_WHITE, bg);
-    _tft->setTextFont(4);
-    _tft->setCursor(10, 220);
-    _tft->print(msg);
-}
-
 // Helper: draw a button with centred label; highlighted if active
 static void _btn(int16_t x, int16_t y, int16_t w, int16_t h,
                  const char* label, bool active, uint8_t font = 4)
@@ -359,9 +289,49 @@ static void _btn(int16_t x, int16_t y, int16_t w, int16_t h,
     _tft->print(label);
 }
 
+static void _drawHeader()
+{
+    _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
+    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
+    _tft->setTextFont(4);
+    const char* titles[] = { "K2 RFID Writer", "Instellingen" };
+    int16_t tw = _tft->textWidth(titles[_currentPage]);
+    _tft->setCursor((480 - tw) / 2, 8);
+    _tft->print(titles[_currentPage]);
+}
+
+static void _drawFooter()
+{
+    // Decoratieve balk + navigatieknop op y=245..270 (binnen gekalibreerde zone)
+    _tft->fillRect(0, 240, 480, 80, CLR_HEADER_BG);
+    if (_currentPage == 0)
+        _btn(162, 243, 200, 36, "Instellingen >>", false, 2);
+    else
+        _btn(162, 243, 200, 36, "<< Terug", false, 2);
+}
+
+static void _drawStatusBar()
+{
+    uint16_t bg;
+    String   msg;
+    switch (_rfidStatus)
+    {
+    case STATUS_IDLE:    bg = CLR_IDLE_BG;    msg = "  Wacht op RFID kaart...";    break;
+    case STATUS_WRITING: bg = CLR_WRITING_BG; msg = "  Schrijven naar kaart..."; break;
+    case STATUS_SUCCESS: bg = CLR_SUCCESS_BG; msg = "  Gelukt! Kaart verwijderen."; break;
+    case STATUS_ERROR:   bg = CLR_ERROR_BG;   msg = "  Fout! Probeer opnieuw.";  break;
+    }
+    _tft->fillRect(0, 200, 480, 40, bg);
+    _tft->setTextColor(TFT_WHITE, bg);
+    _tft->setTextFont(4);
+    _tft->setCursor(10, 207);
+    _tft->print(msg);
+}
+
+// Helper: draw a button with centred label; highlighted if active
 static void _drawMainPage()
 {
-    _tft->fillRect(0, 48, 480, 152, CLR_BODY_BG);
+    _tft->fillRect(0, 48, 480, 152, CLR_BODY_BG);  // y=48..199, status y=200..239, nav y=240..319
 
     // ── Materiaal row  y=52..95 ───────────────────────────────────────────
     _tft->setTextFont(2);
@@ -451,31 +421,61 @@ static void _drawColorPicker()
     _tft->print("Terug");
 }
 
-static void _drawNetworkPage()
+static void _drawSettingsPage()
 {
-    _tft->fillRect(0, 48, 480, 232, CLR_BODY_BG);
+    _tft->fillRect(0, 48, 480, 192, CLR_BODY_BG);  // y=48..239, footer from y=240
 
-    const int labelX = 10, valueX = 180, rowH = 44;
-    int y = 55;
+    // ── Materiaal row  y=52..95 (zelfde als hoofdpagina, maar labels i.p.v. knoppen)
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 63);
+    _tft->print("Materiaal:");
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+    _tft->setCursor(170, 57);
+    _tft->print(_dMaterial);
 
-    auto row = [&](const char *label, const String &value) {
-        _tft->setTextFont(2);
-        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-        _tft->setCursor(labelX, y + 8);
-        _tft->print(label);
-        _tft->setTextFont(4);
-        _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
-        _tft->setCursor(valueX, y + 2);
-        _tft->print(value);
-        y += rowH;
-    };
+    // ── Kleur row  y=100..143
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 116);
+    _tft->print("Kleur:");
+    // Toon alle 6 basic kleurvlakken, markeer actieve
+    for (uint8_t i = 0; i < _basicColorCount; i++)
+    {
+        int16_t cx = 162 + i * 46;
+        uint32_t c32 = _basicColors[i];
+        uint16_t c16 = _tft->color565((c32>>16)&0xFF, (c32>>8)&0xFF, c32&0xFF);
+        _tft->fillRoundRect(cx, 100, 42, 40, 4, c16);
+        if (strcmp(_basicColorHex[i], _dColor) == 0)
+            _tft->drawRoundRect(cx - 1, 99, 44, 42, 4, TFT_WHITE);
+    }
+    // Huidige kleur (ook als custom)
+    uint16_t cc = _hexToRGB565(_dColor);
+    _tft->fillRoundRect(162, 100, 42, 40, 4, cc);
+    bool isBasic = false;
+    for (uint8_t i = 0; i < _basicColorCount; i++)
+        if (strcmp(_basicColorHex[i], _dColor) == 0) { isBasic = true; break; }
+    if (!isBasic)
+        _tft->drawRoundRect(161, 99, 44, 42, 4, TFT_WHITE);
+    // Kleur hex code rechts
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(444, 116);
+    _tft->print(_dColor);
 
-    IPAddress lanIP = WiFi.localIP();
-    row("AP netwerk:", AP_SSID);
-    row("AP IP:",      Server_IP.toString());
-    row("WiFi SSID:",  WIFI_SSID.length() > 0 ? WIFI_SSID : "Niet verbonden");
-    row("LAN IP:",     lanIP != (uint32_t)0 ? lanIP.toString() : "--");
-    row("Hostnaam:",   WIFI_HOSTNAME);
+    // ── Gewicht row  y=148..191
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 163);
+    _tft->print("Gewicht:");
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+    _tft->setCursor(170, 157);
+    _tft->print(_dWeight);
+
+    // ── Kalibratie knop – onderin de body (y=193..233, betrouwbare zone)
+    _btn(140, 193, 200, 40, "Touch kalibreren", false, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +572,7 @@ void displayCalibrate()
     _tft->setTextDatum(TL_DATUM);
     _drawHeader();
     if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-    else                   { _drawNetworkPage(); _drawFooter(); }
+    else                   { _drawSettingsPage(); _drawFooter(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +611,9 @@ void displayUpdateSpool(const String &spool)
 {
     _parseSpoolData(spool);
     _initSelections();
-    if (_currentPage == 0 && !_colorPickerActive) { _drawMainPage(); _drawFooter(); }
+    if (_colorPickerActive) return;
+    if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
+    else                   { _drawSettingsPage(); _drawFooter(); }
 }
 
 void displaySetStatus(WriteStatus status)
@@ -668,20 +670,18 @@ void displayLoop()
         return;
     }
 
-    // ── Header navigation (ty < 48) ───────────────────────────────────────
-    if (ty < 48)
+    // ── Footer navigatie (y=240..279, x=162..362) ────────────────────────
+    if (ty >= 240 && tx >= 162 && tx <= 362)
     {
-        if (_currentPage == 0 && tx > 430)
+        if (_currentPage == 0)
         {
-            // Right arrow → network page
             _currentPage = 1;
             _drawHeader();
-            _drawNetworkPage();
+            _drawSettingsPage();
             _drawFooter();
         }
-        else if (_currentPage > 0 && tx >= 190 && tx <= 380)
+        else
         {
-            // "Home" text area → back to main page
             _currentPage = 0;
             _drawHeader();
             _drawMainPage();
@@ -689,6 +689,8 @@ void displayLoop()
         }
         return;
     }
+
+    if (ty < 48) return;  // header – geen actie
 
     // ── Main page buttons ─────────────────────────────────────────────────
     if (_currentPage == 0)
@@ -743,6 +745,17 @@ void displayLoop()
                     return;
                 }
             }
+        }
+    }
+
+    // ── Settings page buttons ─────────────────────────────────────────────
+    if (_currentPage == 1)
+    {
+        // Kalibratie knop: y=193..233, x=140..340
+        if (ty >= 193 && ty <= 233 && tx >= 140 && tx <= 340)
+        {
+            displayCalibrate();
+            return;
         }
     }
 }
