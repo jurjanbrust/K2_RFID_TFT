@@ -357,26 +357,17 @@ static void _drawMainPage()
         if (strcmp(_basicColorHex[i], _dColor) == 0)
             _tft->drawRoundRect(cx - 1, 99, 44, 42, 4, TFT_WHITE);
     }
-    // "Meer..." button
-    _tft->fillRoundRect(440, 100, 36, 40, 4, 0x2945);
+    // "Meer..." button – show current color if it's custom
+    bool _isCustom = true;
+    for (uint8_t i = 0; i < _basicColorCount; i++)
+        if (strcmp(_basicColorHex[i], _dColor) == 0) { _isCustom = false; break; }
+    uint16_t _meerBg = _isCustom ? _hexToRGB565(_dColor) : (uint16_t)0x2945;
+    _tft->fillRoundRect(440, 100, 36, 40, 4, _meerBg);
+    if (_isCustom) _tft->drawRoundRect(439, 99, 38, 42, 4, TFT_WHITE);
     _tft->setTextFont(1);
-    _tft->setTextColor(TFT_WHITE, 0x2945);
+    _tft->setTextColor(TFT_WHITE, _meerBg);
     _tft->setCursor(444, 116);
     _tft->print("Meer");
-
-    // Current selected color swatch (small, left side)
-    uint16_t cc = _hexToRGB565(_dColor);
-    _tft->fillRoundRect(162, 100, 42, 40, 4, cc);
-    if (strcmp(_basicColorHex[0], _dColor) != 0 &&
-        strcmp(_basicColorHex[1], _dColor) != 0 &&
-        strcmp(_basicColorHex[2], _dColor) != 0 &&
-        strcmp(_basicColorHex[3], _dColor) != 0 &&
-        strcmp(_basicColorHex[4], _dColor) != 0 &&
-        strcmp(_basicColorHex[5], _dColor) != 0)
-    {
-        // Custom color not in basic list – show it highlighted in first slot
-        _tft->drawRoundRect(161, 99, 44, 42, 4, TFT_WHITE);
-    }
 
     // ── Gewicht row  y=148..191 ───────────────────────────────────────────
     _tft->setTextFont(2);
@@ -450,14 +441,6 @@ static void _drawSettingsPage()
         if (strcmp(_basicColorHex[i], _dColor) == 0)
             _tft->drawRoundRect(cx - 1, 99, 44, 42, 4, TFT_WHITE);
     }
-    // Huidige kleur (ook als custom)
-    uint16_t cc = _hexToRGB565(_dColor);
-    _tft->fillRoundRect(162, 100, 42, 40, 4, cc);
-    bool isBasic = false;
-    for (uint8_t i = 0; i < _basicColorCount; i++)
-        if (strcmp(_basicColorHex[i], _dColor) == 0) { isBasic = true; break; }
-    if (!isBasic)
-        _tft->drawRoundRect(161, 99, 44, 42, 4, TFT_WHITE);
     // Kleur hex code rechts
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
@@ -578,6 +561,8 @@ void displayCalibrate()
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+bool displayIsSettingsPage() { return _currentPage == 1; }
+
 void displayInit()
 {
     pinMode(9, OUTPUT);

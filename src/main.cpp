@@ -129,9 +129,7 @@ void loop()
     encrypted = true;
   }
 
-  displaySetStatus(STATUS_WRITING);
-
-  // ── Read blocks 4-6 from card and print to serial ─────────────────────
+  // ── Read blocks 4-6 (altijd) ──────────────────────────────────────────
   String readBack = "";
   for (int blk = 4; blk <= 6; blk++)
   {
@@ -139,15 +137,25 @@ void loop()
     if (mfrc522.MIFARE_Read(blk, buf, &len) == MFRC522::STATUS_OK)
     {
       byte dec[16];
-      aes.encrypt(0, buf, dec);  // decrypt (mode 0)
+      aes.encrypt(0, buf, dec);
       for (int j = 0; j < 16; j++) readBack += (char)dec[j];
     }
   }
-  if (readBack.length() > 0)
+  Serial.println("[RFID] card data: " + readBack);
+
+  // ── Op instellingenpagina: alleen tonen, niet schrijven ───────────────
+  if (displayIsSettingsPage())
   {
-    Serial.println("[RFID] card data: " + readBack);
-    displayUpdateSpool(readBack);
+    if (readBack.length() >= 31)
+      displayUpdateSpool(readBack);
+    mfrc522.PICC_HaltA();
+    mfrc522.PCD_StopCrypto1();
+    tone(SPK_PIN, 800, 100);
+    delay(2000);
+    return;
   }
+
+  displaySetStatus(STATUS_WRITING);
 
   byte blockData[17];
   byte encData[16];
@@ -180,6 +188,24 @@ void loop()
       buffer[i] = ekey.keyByte[i];
     }
     mfrc522.MIFARE_Write(7, buffer, 16);
+  }
+
+  // ── Verificatie: lees terug wat geschreven is ─────────────────────────
+  {
+    String verifyBack = "";
+    for (int blk = 4; blk <= 6; blk++)
+    {
+      byte buf[18]; byte len = sizeof(buf);
+      if (mfrc522.MIFARE_Read(blk, buf, &len) == MFRC522::STATUS_OK)
+      {
+        byte dec[16];
+        aes.encrypt(0, buf, dec);
+        for (int j = 0; j < 16; j++) verifyBack += (char)dec[j];
+      }
+    }
+    Serial.println("[RFID] verify readback: " + verifyBack);
+    if (verifyBack.length() >= 31)
+      displayUpdateSpool(verifyBack);
   }
 
   mfrc522.PICC_HaltA();
