@@ -143,18 +143,6 @@ void loop()
   }
   Serial.println("[RFID] card data: " + readBack);
 
-  // ── Op instellingenpagina: alleen tonen, niet schrijven ───────────────
-  if (displayIsSettingsPage())
-  {
-    if (readBack.length() >= 31)
-      displayUpdateSpool(readBack);
-    mfrc522.PICC_HaltA();
-    mfrc522.PCD_StopCrypto1();
-    tone(SPK_PIN, 800, 100);
-    delay(2000);
-    return;
-  }
-
   displaySetStatus(STATUS_WRITING);
 
   byte blockData[17];

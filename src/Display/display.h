@@ -36,9 +36,8 @@
 // ---------------------------------------------------------------------------
 // Screen layout  (landscape 480 x 320)
 //   Header  y=  0  h=48
-//   Body    y= 48  h=152  (4 rows x 38px)
-//   Status  y=200  h=80
-//   Footer  y=280  h=40
+//   Body    y= 48  h=228  (Brand / Type / Color rows)
+//   Status  y=276  h=44   (bottom)
 // ---------------------------------------------------------------------------
 
 enum WriteStatus
@@ -65,8 +64,6 @@ extern String spoolData;
 // Module-level state
 // ---------------------------------------------------------------------------
 static TFT_eSPI*     _tft          = nullptr;
-static uint8_t       _currentPage  = 0;
-static const uint8_t _totalPages   = 2;
 static WriteStatus   _rfidStatus   = STATUS_IDLE;
 static unsigned long _statusUntil  = 0;
 static unsigned long _lastTouch    = 0;
@@ -85,21 +82,25 @@ static char _dWeight[8]   = "1 KG";
 static char _dSerial[8]   = "------";
 
 // Interactive selection state
-static uint8_t _selMaterial       = 0;   // index into _materials[]
-static uint8_t _selWeight         = 0;   // index into _weights[]
-static bool    _colorPickerActive = false;
+static uint8_t _selBrand    = 0;   // index into _brands[]
+static uint8_t _selMaterial = 0;   // index within current brand's types
 
-// Material options  (code written to spoolData[12..13])
-struct _MatDef { const char* code; const char* label; };
-static const _MatDef _materials[] = { {"PL", "PLA"}, {"PT", "PETG"} };
-static const uint8_t _matCount    = 2;
+// Brand options
+struct _BrandDef { const char* label; };
+static const _BrandDef _brands[] = { {"Generic"}, {"Creality"}, {"Bambu"}, {"eSUN"} };
+static const uint8_t _brandCount = 4;
 
-// 6 basic colors for quick selection (hex strings + RGB32 for drawing)
-static const char*    _basicColorHex[] = { "FFFFFF","FF0000","0000FF","00AA00","FFFF00","000000" };
-static const uint32_t _basicColors[]   = { 0xFFFFFF, 0xFF0000, 0x0000FF, 0x00AA00, 0xFFFF00, 0x000000 };
-static const uint8_t  _basicColorCount = 6;
+// Filament type options (brand index + code written to spoolData[12..13])
+struct _MatDef { uint8_t brand; const char* code; const char* label; };
+static const _MatDef _materials[] = {
+    {0,"PL","PLA"}, {0,"PT","PETG"}, {0,"AB","ABS"}, {0,"AS","ASA"}, {0,"TP","TPU"},
+    {1,"PL","PLA"}, {1,"PT","PETG"}, {1,"AB","ABS"}, {1,"AS","ASA"}, {1,"TP","TPU"},
+    {2,"PL","PLA"}, {2,"PT","PETG"}, {2,"AB","ABS"}, {2,"AS","ASA"}, {2,"TP","TPU"},
+    {3,"PL","PLA"}, {3,"PT","PETG"}, {3,"AB","ABS"}, {3,"AS","ASA"}, {3,"TP","TPU"},
+};
+static const uint8_t _matCount = 20;
 
-// Extended palette – 24 colors for color picker (4 rows x 6 cols)
+// 24-color palette – 3 rows x 8 cols (fills remaining body space)
 static const char*    _extColorHex[] = {
     "FF0000","FF6000","FF9000","FFC000","FFFF00","80FF00",
     "00FF00","00FF80","00FFFF","0080FF","0000FF","8000FF",
@@ -116,10 +117,7 @@ static const uint32_t _extColors[] = {
 };
 static const uint8_t _extColorCount = 24;
 
-// Weight options
-struct _WtDef { const char* code; const char* label; };
-static const _WtDef _weights[] = { {"0330","1 KG"}, {"0660","2 KG"}, {"0990","3 KG"} };
-static const uint8_t _weightCount = 3;
+
 
 // ---------------------------------------------------------------------------
 // Bit-bang XPT2046 helpers
@@ -248,28 +246,52 @@ static void _parseSpoolData(const String &s)
     s.substring(25, 31).toCharArray(_dSerial, sizeof(_dSerial));
 }
 
+// Get flat index of selected brand+type
+static uint8_t _flatMatIdx()
+{
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < _matCount; i++)
+    {
+        if (_materials[i].brand == _selBrand)
+        {
+            if (count == _selMaterial) return i;
+            count++;
+        }
+    }
+    return 0;
+}
+
 // Rebuild spoolData from current selection state, then re-parse
 static void _rebuildSpoolData()
 {
     while (spoolData.length() < 45) spoolData += "0";
-    const char* mc = _materials[_selMaterial].code;
+    const char* mc = _materials[_flatMatIdx()].code;
     spoolData.setCharAt(12, mc[0]);
     spoolData.setCharAt(13, mc[1]);
     for (int i = 0; i < 6; i++) spoolData.setCharAt(15 + i, _dColor[i]);
-    const char* wc = _weights[_selWeight].code;
-    for (int i = 0; i < 4; i++) spoolData.setCharAt(21 + i, wc[i]);
+    // Weight always 1 KG = "0330"
+    spoolData.setCharAt(21, '0'); spoolData.setCharAt(22, '3');
+    spoolData.setCharAt(23, '3'); spoolData.setCharAt(24, '0');
     _parseSpoolData(spoolData);
 }
 
 // Sync selection indices from parsed fields (call after _parseSpoolData)
 static void _initSelections()
 {
-    _selMaterial = 0;
     for (uint8_t i = 0; i < _matCount; i++)
-        if (strncmp(_dMaterial, _materials[i].code, 2) == 0) { _selMaterial = i; break; }
-    _selWeight = 0;
-    for (uint8_t i = 0; i < _weightCount; i++)
-        if (strcmp(_dWeight, _weights[i].label) == 0) { _selWeight = i; break; }
+    {
+        if (strncmp(_dMaterial, _materials[i].code, 2) == 0)
+        {
+            _selBrand = _materials[i].brand;
+            uint8_t cnt = 0;
+            for (uint8_t j = 0; j < i; j++)
+                if (_materials[j].brand == _selBrand) cnt++;
+            _selMaterial = cnt;
+            return;
+        }
+    }
+    _selBrand    = 0;
+    _selMaterial = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,20 +316,9 @@ static void _drawHeader()
     _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
     _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
     _tft->setTextFont(4);
-    const char* titles[] = { "K2 RFID Writer", "Instellingen" };
-    int16_t tw = _tft->textWidth(titles[_currentPage]);
+    int16_t tw = _tft->textWidth("K2 RFID Writer");
     _tft->setCursor((480 - tw) / 2, 8);
-    _tft->print(titles[_currentPage]);
-}
-
-static void _drawFooter()
-{
-    // Decoratieve balk + navigatieknop op y=245..270 (binnen gekalibreerde zone)
-    _tft->fillRect(0, 240, 480, 80, CLR_HEADER_BG);
-    if (_currentPage == 0)
-        _btn(162, 243, 200, 36, "Instellingen >>", false, 2);
-    else
-        _btn(162, 243, 200, 36, "<< Terug", false, 2);
+    _tft->print("K2 RFID Writer");
 }
 
 static void _drawStatusBar()
@@ -321,144 +332,62 @@ static void _drawStatusBar()
     case STATUS_SUCCESS: bg = CLR_SUCCESS_BG; msg = "  Gelukt! Kaart verwijderen."; break;
     case STATUS_ERROR:   bg = CLR_ERROR_BG;   msg = "  Fout! Probeer opnieuw.";  break;
     }
-    _tft->fillRect(0, 200, 480, 40, bg);
+    _tft->fillRect(0, 276, 480, 44, bg);
     _tft->setTextColor(TFT_WHITE, bg);
     _tft->setTextFont(4);
-    _tft->setCursor(10, 207);
+    _tft->setCursor(10, 283);
     _tft->print(msg);
 }
 
 // Helper: draw a button with centred label; highlighted if active
 static void _drawMainPage()
 {
-    _tft->fillRect(0, 48, 480, 152, CLR_BODY_BG);  // y=48..199, status y=200..239, nav y=240..319
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);  // body y=48..275
 
-    // ── Materiaal row  y=52..95 ───────────────────────────────────────────
+    // ── Merk row  y=52..92 ────────────────────────────────────────────────
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
     _tft->setCursor(8, 63);
-    _tft->print("Materiaal:");
-    // Buttons start at x=162 (safe zone, away from top-left dead area)
-    for (uint8_t i = 0; i < _matCount; i++)
-        _btn(162 + i * 130, 52, 120, 40, _materials[i].label, i == _selMaterial);
+    _tft->print("Merk:");
+    // 4 brand buttons at x=162, each 77px wide, 2px gap
+    for (uint8_t i = 0; i < _brandCount; i++)
+        _btn(162 + i * 79, 52, 77, 40, _brands[i].label, i == _selBrand, 2);
 
-    // ── Kleur row  y=100..143 ─────────────────────────────────────────────
+    // ── Type row  y=100..144 ──────────────────────────────────────────────
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
     _tft->setCursor(8, 116);
-    _tft->print("Kleur:");
-    // 6 swatches at x=162, each 44px wide with 2px gap
-    for (uint8_t i = 0; i < _basicColorCount; i++)
+    _tft->print("Type:");
+    // Show types for selected brand, each 60px wide, 3px gap
+    uint8_t typeIdx = 0;
+    for (uint8_t i = 0; i < _matCount; i++)
     {
-        int16_t cx = 162 + i * 46;
-        uint32_t c32 = _basicColors[i];
-        uint16_t c16 = _tft->color565((c32>>16)&0xFF, (c32>>8)&0xFF, c32&0xFF);
-        _tft->fillRoundRect(cx, 100, 42, 40, 4, c16);
-        if (strcmp(_basicColorHex[i], _dColor) == 0)
-            _tft->drawRoundRect(cx - 1, 99, 44, 42, 4, TFT_WHITE);
+        if (_materials[i].brand != _selBrand) continue;
+        _btn(162 + typeIdx * 63, 100, 60, 40, _materials[i].label, typeIdx == _selMaterial);
+        typeIdx++;
     }
-    // "Meer..." button – show current color if it's custom
-    bool _isCustom = true;
-    for (uint8_t i = 0; i < _basicColorCount; i++)
-        if (strcmp(_basicColorHex[i], _dColor) == 0) { _isCustom = false; break; }
-    uint16_t _meerBg = _isCustom ? _hexToRGB565(_dColor) : (uint16_t)0x2945;
-    _tft->fillRoundRect(440, 100, 36, 40, 4, _meerBg);
-    if (_isCustom) _tft->drawRoundRect(439, 99, 38, 42, 4, TFT_WHITE);
-    _tft->setTextFont(1);
-    _tft->setTextColor(TFT_WHITE, _meerBg);
-    _tft->setCursor(444, 116);
-    _tft->print("Meer");
 
-    // ── Gewicht row  y=148..191 ───────────────────────────────────────────
+    // ── Kleur grid  y=148..276  3 rows x 8 cols ──────────────────────────
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(8, 163);
-    _tft->print("Gewicht:");
-    for (uint8_t i = 0; i < _weightCount; i++)
-        _btn(162 + i * 106, 148, 96, 40, _weights[i].label, i == _selWeight, 2);
-
-    _drawStatusBar();
-}
-
-// Color picker overlay: 4 rows × 6 cols starting x=162, y=68
-// Each swatch: 50px wide, 2px gap = 52px per col
-static void _drawColorPicker()
-{
-    _tft->fillRect(0, 48, 480, 232, CLR_BODY_BG);
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(8, 57);
-    _tft->print("Kies een kleur:");
-
+    _tft->setCursor(8, 164);
+    _tft->print("Kleur:");
+    // swatch 37x40px, col pitch 39px, row pitch 44px
+    // cols 0..7 → x = 162 + col*39,  rows 0..2 → y = 148 + row*44
     for (uint8_t i = 0; i < _extColorCount; i++)
     {
-        uint8_t col = i % 6;
-        uint8_t row = i / 6;
-        int16_t cx = 162 + col * 52;
-        int16_t cy =  68 + row * 43;
+        uint8_t col = i % 8;
+        uint8_t row = i / 8;
+        int16_t cx = 162 + col * 39;
+        int16_t cy = 148 + row * 44;
         uint32_t c32 = _extColors[i];
         uint16_t c16 = _tft->color565((c32>>16)&0xFF, (c32>>8)&0xFF, c32&0xFF);
-        _tft->fillRoundRect(cx, cy, 48, 40, 4, c16);
+        _tft->fillRoundRect(cx, cy, 37, 40, 4, c16);
         if (strcmp(_extColorHex[i], _dColor) == 0)
-            _tft->drawRoundRect(cx - 1, cy - 1, 50, 42, 4, TFT_WHITE);
+            _tft->drawRoundRect(cx - 1, cy - 1, 39, 42, 4, TFT_WHITE);
     }
 
-    // "Terug" button at safe x position (y=244 well above footer)
-    _tft->fillRoundRect(330, 244, 140, 34, 6, CLR_ACCENT);
-    _tft->setTextFont(4);
-    _tft->setTextColor(TFT_WHITE, CLR_ACCENT);
-    int16_t tw = _tft->textWidth("Terug");
-    _tft->setCursor(330 + (140 - tw) / 2, 250);
-    _tft->print("Terug");
-}
-
-static void _drawSettingsPage()
-{
-    _tft->fillRect(0, 48, 480, 192, CLR_BODY_BG);  // y=48..239, footer from y=240
-
-    // ── Materiaal row  y=52..95 (zelfde als hoofdpagina, maar labels i.p.v. knoppen)
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(8, 63);
-    _tft->print("Materiaal:");
-    _tft->setTextFont(4);
-    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
-    _tft->setCursor(170, 57);
-    _tft->print(_dMaterial);
-
-    // ── Kleur row  y=100..143
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(8, 116);
-    _tft->print("Kleur:");
-    // Toon alle 6 basic kleurvlakken, markeer actieve
-    for (uint8_t i = 0; i < _basicColorCount; i++)
-    {
-        int16_t cx = 162 + i * 46;
-        uint32_t c32 = _basicColors[i];
-        uint16_t c16 = _tft->color565((c32>>16)&0xFF, (c32>>8)&0xFF, c32&0xFF);
-        _tft->fillRoundRect(cx, 100, 42, 40, 4, c16);
-        if (strcmp(_basicColorHex[i], _dColor) == 0)
-            _tft->drawRoundRect(cx - 1, 99, 44, 42, 4, TFT_WHITE);
-    }
-    // Kleur hex code rechts
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(444, 116);
-    _tft->print(_dColor);
-
-    // ── Gewicht row  y=148..191
-    _tft->setTextFont(2);
-    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(8, 163);
-    _tft->print("Gewicht:");
-    _tft->setTextFont(4);
-    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
-    _tft->setCursor(170, 157);
-    _tft->print(_dWeight);
-
-    // ── Kalibratie knop – onderin de body (y=193..233, betrouwbare zone)
-    _btn(140, 193, 200, 40, "Touch kalibreren", false, 2);
+    _drawStatusBar();
 }
 
 // ---------------------------------------------------------------------------
@@ -554,14 +483,13 @@ void displayCalibrate()
     _tft->fillScreen(TFT_BLACK);
     _tft->setTextDatum(TL_DATUM);
     _drawHeader();
-    if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-    else                   { _drawSettingsPage(); _drawFooter(); }
+    _drawMainPage();
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-bool displayIsSettingsPage() { return _currentPage == 1; }
+bool displayIsSettingsPage() { return false; }
 
 void displayInit()
 {
@@ -588,7 +516,6 @@ void displayInit()
     {
         _drawHeader();
         _drawMainPage();
-        _drawFooter();
     }
 }
 
@@ -596,9 +523,7 @@ void displayUpdateSpool(const String &spool)
 {
     _parseSpoolData(spool);
     _initSelections();
-    if (_colorPickerActive) return;
-    if (_currentPage == 0) { _drawMainPage(); _drawFooter(); }
-    else                   { _drawSettingsPage(); _drawFooter(); }
+    _drawMainPage();
 }
 
 void displaySetStatus(WriteStatus status)
@@ -606,7 +531,7 @@ void displaySetStatus(WriteStatus status)
     _rfidStatus = status;
     if (status == STATUS_SUCCESS || status == STATUS_ERROR)
         _statusUntil = millis() + 3000;
-    if (_currentPage == 0) _drawStatusBar();
+    _drawStatusBar();
 }
 
 void displayLoop()
@@ -616,7 +541,7 @@ void displayLoop()
     {
         _statusUntil = 0;
         _rfidStatus  = STATUS_IDLE;
-        if (_currentPage == 0 && !_colorPickerActive) _drawStatusBar();
+        _drawStatusBar();
     }
 
     uint16_t tx, ty;
@@ -625,122 +550,56 @@ void displayLoop()
     _lastTouch = millis();
     Serial.printf("[TOUCH] x=%d y=%d\n", tx, ty);
 
-    // ── Color picker overlay ──────────────────────────────────────────────
-    if (_colorPickerActive)
-    {
-        // "Terug" button: y=244..278, x=330..470
-        if (ty >= 244 && tx >= 330)
-        {
-            _colorPickerActive = false;
-            _drawMainPage();
-            return;
-        }
-        // Swatch tap: 4 rows × 6 cols, x=162..474, y=68..239
-        if (tx >= 162 && ty >= 68 && ty < 240)
-        {
-            int8_t col = (tx - 162) / 52;
-            int8_t row = (ty -  68) / 43;
-            if (col >= 0 && col < 6 && row >= 0 && row < 4)
-            {
-                uint8_t idx = (uint8_t)(row * 6 + col);
-                if (idx < _extColorCount)
-                {
-                    strncpy(_dColor, _extColorHex[idx], sizeof(_dColor));
-                    _rebuildSpoolData();
-                    _colorPickerActive = false;
-                    _drawMainPage();
-                }
-            }
-        }
-        return;
-    }
-
-    // ── Footer navigatie (y=240..279, x=162..362) ────────────────────────
-    if (ty >= 240 && tx >= 162 && tx <= 362)
-    {
-        if (_currentPage == 0)
-        {
-            _currentPage = 1;
-            _drawHeader();
-            _drawSettingsPage();
-            _drawFooter();
-        }
-        else
-        {
-            _currentPage = 0;
-            _drawHeader();
-            _drawMainPage();
-            _drawFooter();
-        }
-        return;
-    }
-
     if (ty < 48) return;  // header – geen actie
 
     // ── Main page buttons ─────────────────────────────────────────────────
-    if (_currentPage == 0)
     {
-        // Material buttons: y=52..92, x=162..412
+        // Brand buttons: y=52..92, x=162..472 (4 × 79px)
         if (ty >= 52 && ty <= 92 && tx >= 162)
         {
-            for (uint8_t i = 0; i < _matCount; i++)
+            uint8_t i = (tx - 162) / 79;
+            if (i < _brandCount)
             {
-                int16_t bx = 162 + i * 130;
-                if (tx >= bx && tx <= bx + 120)
-                {
-                    _selMaterial = i;
-                    _rebuildSpoolData();
-                    _drawMainPage();
-                    return;
-                }
-            }
-        }
-
-        // Color row: y=100..140
-        if (ty >= 100 && ty <= 140 && tx >= 162)
-        {
-            if (tx >= 440)  // "Meer..." button
-            {
-                _colorPickerActive = true;
-                _drawColorPicker();
-                return;
-            }
-            // Basic swatches: x=162..437, each 46px wide
-            uint8_t i = (tx - 162) / 46;
-            if (i < _basicColorCount)
-            {
-                strncpy(_dColor, _basicColorHex[i], sizeof(_dColor));
+                _selBrand    = i;
+                _selMaterial = 0;
                 _rebuildSpoolData();
                 _drawMainPage();
                 return;
             }
         }
 
-        // Weight buttons: y=148..188, x=162..456
-        if (ty >= 148 && ty <= 188 && tx >= 162)
+        // Type buttons: y=100..144, x=162..+ (up to 5 × 63px)
+        if (ty >= 100 && ty <= 144 && tx >= 162)
         {
-            for (uint8_t i = 0; i < _weightCount; i++)
+            uint8_t i = (tx - 162) / 63;
+            uint8_t typeCount = 0;
+            for (uint8_t j = 0; j < _matCount; j++)
+                if (_materials[j].brand == _selBrand) typeCount++;
+            if (i < typeCount)
             {
-                int16_t bx = 162 + i * 106;
-                if (tx >= bx && tx <= bx + 96)
+                _selMaterial = i;
+                _rebuildSpoolData();
+                _drawMainPage();
+                return;
+            }
+        }
+
+        // Color grid: 3 rows x 8 cols, x=162..472, y=148..276, col pitch=39, row pitch=44
+        if (ty >= 148 && ty < 276 && tx >= 162)
+        {
+            uint8_t col = (tx - 162) / 39;
+            uint8_t row = (ty - 148) / 44;
+            if (col < 8 && row < 3)
+            {
+                uint8_t idx = row * 8 + col;
+                if (idx < _extColorCount)
                 {
-                    _selWeight = i;
+                    strncpy(_dColor, _extColorHex[idx], sizeof(_dColor));
                     _rebuildSpoolData();
                     _drawMainPage();
                     return;
                 }
             }
-        }
-    }
-
-    // ── Settings page buttons ─────────────────────────────────────────────
-    if (_currentPage == 1)
-    {
-        // Kalibratie knop: y=193..233, x=140..340
-        if (ty >= 193 && ty <= 233 && tx >= 140 && tx <= 340)
-        {
-            displayCalibrate();
-            return;
         }
     }
 }
