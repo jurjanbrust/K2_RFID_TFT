@@ -2,6 +2,7 @@
 
 #include <TFT_eSPI.h>
 #include <Preferences.h>
+#include <time.h>
 
 // ---------------------------------------------------------------------------
 // Hardware layout  –  Regular ESP32 DevKit
@@ -86,7 +87,39 @@ static uint8_t  _calFlags = 0;
 // ---------------------------------------------------------------------------
 // IR Control page state  (set via public API from main.cpp)
 // ---------------------------------------------------------------------------
-static uint8_t  _currentPage  = 0;    // 0 = RFID writer, 1 = IR Control
+static uint8_t  _currentPage  = 0;    // 0=RFID 1=Lamp 2=Audio 3=Airco 4=Macro's 5=Inst.
+
+static const char* const _pageNames[] = { "RFID", "Lamp", "Audio", "Airco", "Macro's", "Inst." };
+static const uint8_t _pageCount = 6;
+static bool _calLoaded = false;
+
+// Swipe gesture tracking
+static bool          _swipeTracking = false;
+static uint16_t      _swStartX      = 0, _swCurrX = 0, _swCurrY = 0;
+static unsigned long _swStartMs     = 0;
+
+// NTP clock display
+static char          _ntpBuf[6]     = "--:--";
+static unsigned long _ntpNextMs     = 0;
+
+// Screen sleep / activity
+static unsigned long _lastActivity  = 0;
+static unsigned long _sleepAfterMs  = 5UL * 60UL * 1000UL;
+static bool          _screenOn      = true;
+
+// Toast notification
+static char          _toastMsg[64]  = {};
+static unsigned long _toastUntil    = 0;
+
+// RFID page: enc1 active field  0=Brand 1=Type 2=Color
+static uint8_t       _rfidField     = 0;
+
+// Audio page: current source  0=Line1 1=Line2 2=BT
+static uint8_t       _audioSource   = 0;
+
+// Macro's page: highlighted row
+static uint8_t       _macroSel      = 0;
+
 static uint8_t  _irMode       = 0;    // 0 = Audio, 1 = Airco
 static uint8_t  _aircoTemp    = 21;
 static uint8_t  _aircoFanIdx  = 0;    // 0 = Auto … 4 = Max
@@ -113,6 +146,7 @@ extern void onIrAcMode(uint8_t mode);    // 0=auto, 1=cool, 2=heat
 extern void onIrPower(bool on);
 extern void onIrAudio(uint8_t action);
 extern void onIrModeSelect(uint8_t mode); // 0=Audio, 1=Airco
+extern void onMacroExecute(uint8_t idx);
 
 static char _dMaterial[8] = "--";
 static char _dColor[8]    = "000000";
@@ -349,23 +383,44 @@ static void _btn(int16_t x, int16_t y, int16_t w, int16_t h,
     _tft->print(label);
 }
 
+static void _drawNtpClock()
+{
+    _tft->fillRect(415, 0, 65, 48, CLR_HEADER_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_HEADER_BG);
+    _tft->setCursor(418, 18);
+    _tft->print(_ntpBuf);
+}
+
 static void _drawHeader()
 {
-    // Two tab buttons: left = K2 RFID (page 0), right = IR Control (page 1)
-    uint16_t bg0 = (_currentPage == 0) ? CLR_ACCENT : 0x2945;
-    uint16_t bg1 = (_currentPage == 1) ? CLR_ACCENT : 0x2945;
-    _tft->fillRect(  0, 0, 239, 48, bg0);
-    _tft->fillRect(241, 0, 239, 48, bg1);
-    _tft->fillRect(239, 8,   2, 32, CLR_HEADER_BG);  // divider
+    _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
+
+    // Six page-indicator dots, centred in left 160px
+    // dotGap=20: dotsW=5*20=100, dot0X=(160-100)/2=30
+    const int16_t dotY   = 24;
+    const int16_t dotR   = 5;
+    const int16_t dotGap = 20;
+    const int16_t dotsW  = (_pageCount - 1) * dotGap;
+    const int16_t dot0X  = (160 - dotsW) / 2;
+    for (uint8_t i = 0; i < _pageCount; i++)
+    {
+        int16_t cx = dot0X + i * dotGap;
+        if (i == _currentPage)
+            _tft->fillCircle(cx, dotY, dotR, CLR_ACCENT);
+        else
+            _tft->fillCircle(cx, dotY, dotR - 2, 0x4A49);
+    }
+
+    // Page name centred in x=160..415 (255px), clock in x=415..479
     _tft->setTextFont(4);
-    _tft->setTextColor(TFT_WHITE, bg0);
-    int16_t tw = _tft->textWidth("K2 RFID");
-    _tft->setCursor((239 - tw) / 2, 11);
-    _tft->print("K2 RFID");
-    _tft->setTextColor(TFT_WHITE, bg1);
-    tw = _tft->textWidth("IR Control");
-    _tft->setCursor(241 + (239 - tw) / 2, 11);
-    _tft->print("IR Control");
+    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
+    const char* name = _pageNames[_currentPage];
+    int16_t tw = _tft->textWidth(name);
+    _tft->setCursor(160 + (255 - tw) / 2, 11);
+    _tft->print(name);
+
+    _drawNtpClock();
 }
 
 static void _drawStatusBar()
@@ -399,6 +454,7 @@ static void _drawMainPage()
     // 4 brand buttons at x=162, each 77px wide, 2px gap
     for (uint8_t i = 0; i < _brandCount; i++)
         _btn(162 + i * 79, 52, 77, 40, _brands[i].label, i == _selBrand, 2);
+    if (_rfidField == 0) _tft->drawRect(160, 50, 316, 44, TFT_YELLOW);
 
     // ── Type row  y=100..144 ──────────────────────────────────────────────
     _tft->setTextFont(2);
@@ -413,6 +469,7 @@ static void _drawMainPage()
         _btn(162 + typeIdx * 63, 100, 60, 40, _materials[i].label, typeIdx == _selMaterial);
         typeIdx++;
     }
+    if (_rfidField == 1) _tft->drawRect(160, 98, 316, 46, TFT_YELLOW);
 
     // ── Kleur grid  y=148..276  3 rows x 8 cols ──────────────────────────
     _tft->setTextFont(2);
@@ -433,6 +490,7 @@ static void _drawMainPage()
         if (strcmp(_extColorHex[i], _dColor) == 0)
             _tft->drawRoundRect(cx - 1, cy - 1, 39, 42, 4, TFT_WHITE);
     }
+    if (_rfidField == 2) _tft->drawRect(160, 146, 316, 130, TFT_YELLOW);
 
     _drawStatusBar();
 }
@@ -702,9 +760,356 @@ void displayCalibrate()
 }
 
 // ---------------------------------------------------------------------------
+// Settings page
+// ---------------------------------------------------------------------------
+static void _drawSettingsPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+    _tft->setCursor(16, 58);
+    _tft->print("Instellingen");
+
+    // Calibrate button
+    _btn(16, 96, 290, 48, "Kalibreer aanraking", false);
+
+    _tft->setTextFont(2);
+    if (_calLoaded) {
+        _tft->setTextColor(0x07E0, CLR_BODY_BG);   // green
+        _tft->setCursor(16, 152);
+        _tft->print("Status: kalibratie opgeslagen");
+    } else {
+        _tft->setTextColor(0xFD20, CLR_BODY_BG);   // orange
+        _tft->setCursor(16, 152);
+        _tft->print("Status: standaard waarden (niet gekalibreerd)");
+    }
+
+    // Wis kalibratie button
+    _btn(16, 172, 200, 34, "Wis kalibratie", false, 2);
+
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(16, 216);
+    _tft->print("Tip: houd enc2 ingedrukt voor snelkoppeling");
+
+    // Status bar
+    _tft->fillRect(0, 276, 480, 44, CLR_IDLE_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_IDLE_BG);
+    _tft->setCursor(10, 283);
+    _tft->print("Raak een knop aan om actie uit te voeren");
+}
+
+// ---------------------------------------------------------------------------
+// Touch handlers extracted from displayLoop
+// ---------------------------------------------------------------------------
+static void _handleSettingsTouch(uint16_t tx, uint16_t ty)
+{
+    if (ty >= 96 && ty <= 144 && tx >= 16 && tx <= 306)
+    {
+        displayCalibrate();
+        _calLoaded = true;
+        _drawHeader();
+        _drawSettingsPage();
+        return;
+    }
+    if (ty >= 172 && ty <= 206 && tx >= 16 && tx <= 216)
+    {
+        Preferences p;
+        p.begin("tcal2", false);
+        p.clear();
+        p.end();
+        _calLoaded = false;
+        _calX1 = 300; _calX2 = 3800;
+        _calY1 = 300; _calY2 = 3800;
+        _calFlags = 0;
+        Serial.println("[CAL] kalibratie gewist, standaard waarden hersteld");
+        _drawSettingsPage();
+        return;
+    }
+}
+
+static void _handleRfidTouch(uint16_t tx, uint16_t ty)
+{
+    if (ty >= 52 && ty <= 92 && tx >= 162)
+    {
+        uint8_t i = (tx - 162) / 79;
+        if (i < _brandCount)
+        {
+            _selBrand    = i;
+            _selMaterial = 0;
+            _rfidField   = 0;
+            _rebuildSpoolData();
+            _drawMainPage();
+            return;
+        }
+    }
+    if (ty >= 100 && ty <= 144 && tx >= 162)
+    {
+        uint8_t i = (tx - 162) / 63;
+        uint8_t typeCount = 0;
+        for (uint8_t j = 0; j < _matCount; j++)
+            if (_materials[j].brand == _selBrand) typeCount++;
+        if (i < typeCount)
+        {
+            _selMaterial = i;
+            _rfidField   = 1;
+            _rebuildSpoolData();
+            _drawMainPage();
+            return;
+        }
+    }
+    if (ty >= 148 && ty < 276 && tx >= 162)
+    {
+        uint8_t col = (tx - 162) / 39;
+        uint8_t row = (ty - 148) / 44;
+        if (col < 8 && row < 3)
+        {
+            uint8_t idx = row * 8 + col;
+            if (idx < _extColorCount)
+            {
+                strncpy(_dColor, _extColorHex[idx], sizeof(_dColor));
+                _rfidField = 2;
+                _rebuildSpoolData();
+                _drawMainPage();
+                return;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Airco standalone page (pagina 3)
+// ---------------------------------------------------------------------------
+static void _drawAircoPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    // Temperatuur  y=58..120
+    uint16_t tempBg = _aircoPower ? CLR_HEADER_BG : CLR_IDLE_BG;
+    _tft->fillRect(96, 58, 288, 60, tempBg);
+    _tft->drawRect(96, 58, 288, 60, CLR_ACCENT);
+    char tmpBuf[8];
+    snprintf(tmpBuf, sizeof(tmpBuf), "%d C", _aircoTemp);
+    _tft->setTextFont(6);
+    _tft->setTextColor(TFT_WHITE, tempBg);
+    int16_t tw = _tft->textWidth(tmpBuf);
+    _tft->setCursor(96 + (288 - tw) / 2, 67);
+    _tft->print(tmpBuf);
+    _btn(  8, 70, 80, 36, " - ", false);
+    _btn(392, 70, 80, 36, " + ", false);
+
+    // Modus  y=130..168
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 143);
+    _tft->print("Modus:");
+    _btn( 80, 130, 120, 36, "Auto",      _aircoAcMode == 0);
+    _btn(208, 130, 120, 36, "Koelen",    _aircoAcMode == 1);
+    _btn(336, 130, 136, 36, "Verwarmen", _aircoAcMode == 2);
+
+    // Ventilator  y=176..206
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 188);
+    _tft->print("Ventil:");
+    for (uint8_t i = 0; i < 5; i++)
+        _btn(80 + i * 78, 176, 74, 28, _fanLabels[i], _aircoFanIdx == i, 2);
+
+    // Aan / Uit  y=218..254
+    uint16_t aanBg = _aircoPower ? CLR_SUCCESS_BG : 0x2945;
+    uint16_t uitBg = _aircoPower ? 0x2945        : CLR_ERROR_BG;
+    _tft->fillRoundRect(  8, 218, 226, 36, 6, aanBg);
+    _tft->fillRoundRect(246, 218, 226, 36, 6, uitBg);
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, aanBg);
+    int16_t tw2 = _tft->textWidth("Inschakelen");
+    _tft->setCursor(8   + (226 - tw2) / 2, 223);
+    _tft->print("Inschakelen");
+    _tft->setTextColor(TFT_WHITE, uitBg);
+    tw2 = _tft->textWidth("Uitschakelen");
+    _tft->setCursor(246 + (226 - tw2) / 2, 223);
+    _tft->print("Uitschakelen");
+
+    // Status bar
+    _tft->fillRect(0, 276, 480, 44, CLR_STATUS_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_STATUS_BG);
+    _tft->setCursor(8, 290);
+    String line = String(_wifiOk ? "WiFi: OK   " : "WiFi: --   ") + _lastIrAction;
+    if (line.length() > 40) line = line.substring(0, 40);
+    _tft->print(line);
+    _tft->setCursor(310, 290);
+    _tft->print("Enc1: temp  |  Klik: modus");
+}
+
+static void _handleAircoTouch(uint16_t tx, uint16_t ty)
+{
+    if (ty >= 70 && ty <= 106)
+    {
+        if (tx <=  88) onIrTempDelta(-1);
+        if (tx >= 392) onIrTempDelta(+1);
+        return;
+    }
+    if (ty >= 130 && ty <= 166)
+    {
+        if (tx >=  80 && tx <= 200) onIrAcMode(0);
+        if (tx >= 208 && tx <= 328) onIrAcMode(1);
+        if (tx >= 336 && tx <= 472) onIrAcMode(2);
+        return;
+    }
+    if (ty >= 176 && ty <= 204 && tx >= 80)
+    {
+        uint8_t idx = (tx - 80) / 78;
+        if (idx < 5) onIrFanChange(idx);
+        return;
+    }
+    if (ty >= 218 && ty <= 254)
+    {
+        if (tx <= 234) onIrPower(true);
+        else           onIrPower(false);
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audio standalone page (pagina 2)
+// ---------------------------------------------------------------------------
+static void _drawAudioPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    // Spotify placeholder  y=56..128
+    _tft->fillRect(8, 56, 90, 70, 0x1082);
+    _tft->setTextFont(4);
+    _tft->setTextColor(0x4A49, 0x1082);
+    _tft->setCursor(32, 74);
+    _tft->print("?");
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+    _tft->setCursor(108, 60);
+    _tft->print("Spotify");
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(108, 90);
+    _tft->print("binnenkort beschikbaar");
+    _tft->setCursor(108, 108);
+    _tft->print("Enc1 = volume  |  Klik = play/pauze");
+
+    // Transport  y=138..182
+    _btn(  8, 138, 140, 42, "< Vorig",      false);
+    _btn(156, 138, 168, 42, "Play / Pauze", false, 2);
+    _btn(332, 138, 140, 42, "Volgend >",    false);
+
+    // Aan/Uit  y=192..222
+    _btn(8, 192, 130, 28, "Aan / Uit", false, 2);
+
+    // Bron  y=234..262
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 242);
+    _tft->print("Bron:");
+    _btn( 56, 234,  96, 28, "Line 1",    _audioSource == 0, 2);
+    _btn(157, 234,  96, 28, "Line 2",    _audioSource == 1, 2);
+    _btn(258, 234, 112, 28, "Bluetooth", _audioSource == 2, 2);
+
+    // Status bar
+    _tft->fillRect(0, 276, 480, 44, CLR_STATUS_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_STATUS_BG);
+    _tft->setCursor(10, 290);
+    _tft->print("Enc1: volume  |  Klik: play  |  Enc2 klik: bron wisselen");
+}
+
+static void _handleAudioTouch(uint16_t tx, uint16_t ty)
+{
+    if (ty >= 138 && ty <= 182)
+    {
+        if (tx >=   8 && tx <= 148) onIrAudio(IR_AUDIO_PREV);
+        if (tx >= 156 && tx <= 324) onIrAudio(IR_AUDIO_PLAYPAUSE);
+        if (tx >= 332 && tx <= 472) onIrAudio(IR_AUDIO_NEXT);
+        return;
+    }
+    if (ty >= 192 && ty <= 222 && tx <= 138) { onIrAudio(IR_AUDIO_ONOFF); return; }
+    if (ty >= 234 && ty <= 262)
+    {
+        if (tx >=  56 && tx <= 152) { _audioSource = 0; onIrAudio(IR_AUDIO_LINE1);      _drawAudioPage(); }
+        if (tx >= 157 && tx <= 253) { _audioSource = 1; onIrAudio(IR_AUDIO_LINE2);      _drawAudioPage(); }
+        if (tx >= 258 && tx <= 370) { _audioSource = 2; onIrAudio(IR_AUDIO_BLUETOOTH);  _drawAudioPage(); }
+        return;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Macro's page (pagina 4)
+// ---------------------------------------------------------------------------
+struct _MacroDef { const char* name; const char* desc; };
+static const _MacroDef _macrosList[] = {
+    { "Film",   "Airco 20\xB0\x43  |  Verwarmen  |  Audio Line 2" },
+    { "Lezen",  "Airco 21\xB0\x43  |  Auto       |  Audio Uit" },
+    { "Nacht",  "Airco 19\xB0\x43  |  Auto       |  Alles uit" },
+    { "Gaming", "Airco 22\xB0\x43  |  Koelen     |  Bluetooth" },
+};
+static const uint8_t _macroCount = 4;
+
+static void _drawMacrosPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+    for (uint8_t i = 0; i < _macroCount; i++)
+    {
+        int16_t y = 56 + i * 50;
+        uint16_t bg = (i == _macroSel) ? CLR_ACCENT : 0x2945;
+        _tft->fillRoundRect(8, y, 464, 42, 6, bg);
+        if (i == _macroSel) _tft->drawRoundRect(8, y, 464, 42, 6, TFT_WHITE);
+        _tft->setTextFont(4);
+        _tft->setTextColor(TFT_WHITE, bg);
+        _tft->setCursor(20, y + 5);
+        _tft->print(_macrosList[i].name);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, bg);
+        _tft->setCursor(120, y + 14);
+        _tft->print(_macrosList[i].desc);
+    }
+    _tft->fillRect(0, 276, 480, 44, CLR_STATUS_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_STATUS_BG);
+    _tft->setCursor(10, 290);
+    _tft->print("Enc1: selecteren  |  Klik: uitvoeren  |  Touch: direct");
+}
+
+static void _handleMacrosTouch(uint16_t tx, uint16_t ty)
+{
+    for (uint8_t i = 0; i < _macroCount; i++)
+    {
+        int16_t y0 = 56 + i * 50;
+        if (ty >= y0 && ty <= y0 + 42 && tx >= 8 && tx <= 472)
+        {
+            _macroSel = i;
+            _drawMacrosPage();
+            onMacroExecute(i);
+            return;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Toast notification
+// ---------------------------------------------------------------------------
+static void _clearToast()
+{
+    _toastUntil = 0;
+    // Redraw body of current page to clear overlay
+    if      (_currentPage == 0) _drawMainPage();
+    else if (_currentPage == 2) _drawAudioPage();
+    else if (_currentPage == 3) _drawAircoPage();
+    else if (_currentPage == 4) _drawMacrosPage();
+    else if (_currentPage == 5) _drawSettingsPage();
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-bool displayIsSettingsPage() { return false; }
 
 void displayInit()
 {
@@ -725,13 +1130,12 @@ void displayInit()
     _parseSpoolData(spoolData);
     _initSelections();
 
-    if (!_loadTouchCal())
-        displayCalibrate();
-    else
-    {
-        _drawHeader();
-        _drawMainPage();
-    }
+    _calLoaded = _loadTouchCal();
+    if (!_calLoaded)
+        Serial.println("[CAL] geen opgeslagen kalibratie, standaard waarden gebruikt");
+
+    _drawHeader();
+    _drawMainPage();
 }
 
 void displayUpdateSpool(const String &spool)
@@ -749,9 +1153,40 @@ void displaySetStatus(WriteStatus status)
     _drawStatusBar();
 }
 
+// Forward declaration – defined later in this file
+void displaySetPage(uint8_t page);
+
 void displayLoop()
 {
-    // Auto-reset RFID status bar
+    // ── Screen sleep check ────────────────────────────────────────────────
+    if (_screenOn && _lastActivity > 0 && millis() - _lastActivity > _sleepAfterMs)
+    {
+        _screenOn = false;
+        digitalWrite(25, LOW);
+    }
+
+    // ── Toast clear ───────────────────────────────────────────────────────
+    if (_toastUntil > 0 && millis() > _toastUntil)
+        _clearToast();
+
+    // ── NTP clock update every 30 s ───────────────────────────────────────
+    if (millis() > _ntpNextMs)
+    {
+        _ntpNextMs = millis() + 30000;
+        struct tm t;
+        if (getLocalTime(&t, 100))
+        {
+            char buf[6];
+            snprintf(buf, sizeof(buf), "%02d:%02d", t.tm_hour, t.tm_min);
+            if (strncmp(buf, _ntpBuf, 5) != 0)
+            {
+                memcpy(_ntpBuf, buf, 6);
+                _drawNtpClock();
+            }
+        }
+    }
+
+    // ── RFID status auto-reset ────────────────────────────────────────────
     if (_currentPage == 0 && _statusUntil > 0 && millis() > _statusUntil)
     {
         _statusUntil = 0;
@@ -759,101 +1194,114 @@ void displayLoop()
         _drawStatusBar();
     }
 
-    uint16_t tx, ty;
-    if (!_touchGetXY(&tx, &ty)) return;
+    // ── Touch / swipe state machine ───────────────────────────────────────
+    bool pressed = _touchPressed();
+    if (pressed)
+    {
+        if (!_screenOn)
+        {
+            _screenOn = true;
+            _lastActivity = millis();
+            digitalWrite(25, HIGH);
+            return;  // skip processing on wake frame
+        }
+        _lastActivity = millis();
+        uint16_t tx, ty;
+        if (_touchGetXY(&tx, &ty))
+        {
+            _swCurrX = tx; _swCurrY = ty;
+            if (!_swipeTracking)
+            {
+                _swipeTracking = true;
+                _swStartX  = tx;
+                _swStartMs = millis();
+            }
+        }
+        return;  // wait for release
+    }
+
+    // Not pressed – check if a touch just ended
+    if (!_swipeTracking) return;
+    _swipeTracking = false;
+
+    unsigned long dt = millis() - _swStartMs;
+    int32_t dx = (int32_t)_swCurrX - (int32_t)_swStartX;
+
+    if (dt < 500 && abs(dx) > 60)
+    {
+        // Swipe gesture: change page
+        if (dx < 0) displaySetPage((_currentPage + 1) % _pageCount);
+        else        displaySetPage((_currentPage + _pageCount - 1) % _pageCount);
+        Serial.printf("[SWIPE] dx=%d -> page %d\n", (int)dx, _currentPage);
+        _lastTouch = millis();
+        return;
+    }
+
+    // Tap – apply debounce
     if (millis() - _lastTouch < 600) return;
     _lastTouch = millis();
+    uint16_t tx = _swCurrX, ty = _swCurrY;
     Serial.printf("[TOUCH] x=%d y=%d\n", tx, ty);
 
-    // ── Header tap: switch page ──────────────────────────────────────────
+    // ── Header tap: cycle page ────────────────────────────────────────────
     if (ty < 48)
     {
-        uint8_t newPage = (tx < 240) ? 0 : 1;
-        if (newPage != _currentPage)
-        {
-            _currentPage = newPage;
-            _drawHeader();
-            if (_currentPage == 0) _drawMainPage();
-            else                   _drawIrPage();
-        }
+        uint8_t np = (tx > 240)
+            ? (_currentPage + 1) % _pageCount
+            : (_currentPage + _pageCount - 1) % _pageCount;
+        displaySetPage(np);
         return;
     }
 
-    // ── Route to active page ─────────────────────────────────────────────
-    if (_currentPage == 1)
+    // ── Route to active page ──────────────────────────────────────────────
+    switch (_currentPage)
     {
-        _handleIrPageTouch(tx, ty);
-        return;
-    }
-
-    // ── RFID page touch ──────────────────────────────────────────────────
-    {
-        // Brand buttons: y=52..92, x=162..472 (4 × 79px)
-        if (ty >= 52 && ty <= 92 && tx >= 162)
-        {
-            uint8_t i = (tx - 162) / 79;
-            if (i < _brandCount)
-            {
-                _selBrand    = i;
-                _selMaterial = 0;
-                _rebuildSpoolData();
-                _drawMainPage();
-                return;
-            }
-        }
-
-        // Type buttons: y=100..144, x=162..+ (up to 5 × 63px)
-        if (ty >= 100 && ty <= 144 && tx >= 162)
-        {
-            uint8_t i = (tx - 162) / 63;
-            uint8_t typeCount = 0;
-            for (uint8_t j = 0; j < _matCount; j++)
-                if (_materials[j].brand == _selBrand) typeCount++;
-            if (i < typeCount)
-            {
-                _selMaterial = i;
-                _rebuildSpoolData();
-                _drawMainPage();
-                return;
-            }
-        }
-
-        // Color grid: 3 rows x 8 cols, x=162..472, y=148..276, col pitch=39, row pitch=44
-        if (ty >= 148 && ty < 276 && tx >= 162)
-        {
-            uint8_t col = (tx - 162) / 39;
-            uint8_t row = (ty - 148) / 44;
-            if (col < 8 && row < 3)
-            {
-                uint8_t idx = row * 8 + col;
-                if (idx < _extColorCount)
-                {
-                    strncpy(_dColor, _extColorHex[idx], sizeof(_dColor));
-                    _rebuildSpoolData();
-                    _drawMainPage();
-                    return;
-                }
-            }
-        }
+    case 0: _handleRfidTouch(tx, ty);     break;
+    case 2: _handleAudioTouch(tx, ty);    break;
+    case 3: _handleAircoTouch(tx, ty);    break;
+    case 4: _handleMacrosTouch(tx, ty);   break;
+    case 5: _handleSettingsTouch(tx, ty); break;
+    default: break;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Public API – IR Control page
+// Public API – page control
 // ---------------------------------------------------------------------------
 void displaySetPage(uint8_t page)
 {
+    if (page >= _pageCount) page = 0;
     if (page == _currentPage) return;
     _currentPage = page;
+    Serial.printf("[PAGE] -> %d (%s)\n", page, _pageNames[page]);
     _drawHeader();
-    if (page == 0) _drawMainPage();
-    else           _drawIrPage();
+    switch (page)
+    {
+    case 0: _drawMainPage();    break;
+    case 2: _drawAudioPage();   break;
+    case 3: _drawAircoPage();   break;
+    case 4: _drawMacrosPage();  break;
+    case 5: _drawSettingsPage(); break;
+    default:
+        _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+        _tft->fillRect(0, 276, 480, 44, CLR_IDLE_BG);
+        _tft->setTextFont(2);
+        _tft->setTextColor(TFT_WHITE, CLR_IDLE_BG);
+        _tft->setCursor(10, 290);
+        _tft->print(_pageNames[page]);
+        _tft->print(" \u2013 binnenkort beschikbaar");
+        break;
+    }
 }
+
+uint8_t displayGetPage() { return _currentPage; }
+
+void displayNextPage() { displaySetPage((_currentPage + 1) % _pageCount); }
+void displayPrevPage() { displaySetPage((_currentPage + _pageCount - 1) % _pageCount); }
 
 void displaySetIrMode(uint8_t mode)
 {
     _irMode = mode;
-    if (_currentPage == 1) _drawIrPage();
 }
 
 void displayUpdateAirco(uint8_t temp, uint8_t fanIdx, uint8_t acMode, bool power)
@@ -862,18 +1310,114 @@ void displayUpdateAirco(uint8_t temp, uint8_t fanIdx, uint8_t acMode, bool power
     _aircoFanIdx = fanIdx;
     _aircoAcMode = acMode;
     _aircoPower  = power;
-    if (_currentPage == 1 && _irMode == 1) _drawIrPage();
+    if (_currentPage == 3) _drawAircoPage();
 }
 
 void displaySetWifi(bool ok)
 {
     _wifiOk = ok;
-    if (_currentPage == 1) _drawIrStatusBar();
+    if (_currentPage == 3) _drawAircoPage();
 }
 
 void displaySetLastAction(const char* action)
 {
     strncpy(_lastIrAction, action, sizeof(_lastIrAction) - 1);
     _lastIrAction[sizeof(_lastIrAction) - 1] = '\0';
-    if (_currentPage == 1) _drawIrStatusBar();
+    if (_currentPage == 3) _drawAircoPage();
 }
+
+void displayWakeup()
+{
+    _lastActivity = millis();
+    if (!_screenOn)
+    {
+        _screenOn = true;
+        digitalWrite(25, HIGH);
+    }
+}
+
+void displayToast(const char* msg)
+{
+    strncpy(_toastMsg, msg, sizeof(_toastMsg) - 1);
+    _toastMsg[sizeof(_toastMsg) - 1] = '\0';
+    _toastUntil = millis() + 2500;
+    // Draw overlay
+    _tft->fillRoundRect(40, 112, 400, 52, 8, 0x18E3);
+    _tft->drawRoundRect(40, 112, 400, 52, 8, TFT_WHITE);
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, 0x18E3);
+    int16_t tw = _tft->textWidth(_toastMsg);
+    _tft->setCursor(40 + (400 - tw) / 2, 122);
+    _tft->print(_toastMsg);
+}
+
+void displayShowOtaProgress(uint8_t pct)
+{
+    _tft->fillRoundRect(40, 112, 400, 80, 8, TFT_BLACK);
+    _tft->drawRoundRect(40, 112, 400, 80, 8, TFT_WHITE);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft->setCursor(60, 124);
+    _tft->print("OTA firmware update...");
+    _tft->drawRect(60, 148, 360, 22, CLR_LABEL);
+    uint16_t barW = (uint16_t)(356UL * pct / 100);
+    _tft->fillRect(62, 150, barW, 18, CLR_ACCENT);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", pct);
+    _tft->setTextFont(2);
+    _tft->setCursor(222, 152);
+    _tft->print(buf);
+}
+
+void displayRfidFieldTurn(int delta)
+{
+    if (_currentPage != 0) return;
+    switch (_rfidField)
+    {
+    case 0:
+        _selBrand    = (_selBrand + _brandCount + (delta > 0 ? 1 : -1)) % _brandCount;
+        _selMaterial = 0;
+        break;
+    case 1:
+    {
+        uint8_t tc = 0;
+        for (uint8_t j = 0; j < _matCount; j++)
+            if (_materials[j].brand == _selBrand) tc++;
+        if (tc > 0) _selMaterial = (_selMaterial + tc + (delta > 0 ? 1 : -1)) % tc;
+        break;
+    }
+    case 2:
+    {
+        int8_t cur = -1;
+        for (uint8_t i = 0; i < _extColorCount; i++)
+            if (strncmp(_extColorHex[i], _dColor, 6) == 0) { cur = (int8_t)i; break; }
+        if (cur < 0) cur = 0;
+        cur = (int8_t)((cur + _extColorCount + (delta > 0 ? 1 : -1)) % _extColorCount);
+        strncpy(_dColor, _extColorHex[cur], sizeof(_dColor));
+        break;
+    }
+    }
+    _rebuildSpoolData();
+    _drawMainPage();
+}
+
+void displayRfidFieldNext()
+{
+    if (_currentPage != 0) return;
+    _rfidField = (_rfidField + 1) % 3;
+    _drawMainPage();
+}
+
+void displayMacroSelect(int delta)
+{
+    if (_currentPage != 4) return;
+    _macroSel = (_macroSel + _macroCount + (delta > 0 ? 1 : -1)) % _macroCount;
+    _drawMacrosPage();
+}
+
+void displayMacroExecute()
+{
+    if (_currentPage != 4) return;
+    onMacroExecute(_macroSel);
+}
+

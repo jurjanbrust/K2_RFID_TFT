@@ -459,3 +459,297 @@ Valt ruim binnen de beschikbare heap op een ESP32 zonder PSRAM.
 | **Totaal extra** | **~45 KB** |
 
 > ⚠️ De TLS stack van `WiFiClientSecure` is zwaar (~40 KB). Op het huidige board (520 KB SRAM, waarvan ~200 KB vrij) is dit krap maar haalbaar **als** Hue-aanroepen niet gelijktijdig met de TFT-buffer-operaties plaatsvinden. Aanroepen uitvoeren vanuit een aparte FreeRTOS-taak op core 0 (display draait op core 1) lost dit op. Op de ESP32-S3 met PSRAM is dit geen enkel probleem.
+
+---
+
+## Acceptatiecriteria per fase
+
+Elke fase is klaar als **alle** criteria groen zijn. Compile-criteria worden gecontroleerd via `pio run`. Runtime-criteria via Serial monitor output en visuele inspectie.
+
+---
+
+### Fase 1 – Enc2 paginanavigatie + header 5 stippen
+
+**Compile**: `pio run` zonder errors of warnings.
+
+**Runtime Serial**:
+```
+[PAGE] -> 0
+[PAGE] -> 1
+[PAGE] -> 2
+[PAGE] -> 3
+[PAGE] -> 4
+[PAGE] -> 0   ← wrapround
+```
+
+**Visueel**:
+- Header toont 5 stippen; actieve stip accentkleur, overige grijs
+- Paginanaam in header verandert mee: RFID / Lamp / Audio / Airco / Macro's
+- Geen flicker bij paginawissel
+
+---
+
+### Fase 2 – Swipe-gesture
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[SWIPE] right -> page 1
+[SWIPE] left  -> page 0
+```
+
+**Visueel**:
+- Sleep van links naar rechts over scherm → vorige pagina
+- Sleep van rechts naar links → volgende pagina
+- Korte taps (< 60 px verplaatsing) triggeren geen swipe
+
+---
+
+### Fase 3 – Statusbalk dynamisch
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[HINT] Enc1: Veld  |  Enc2: pagina
+[HINT] Enc1: Volume  |  Enc2: pagina
+[HINT] Enc1: Scene  |  Enc2: pagina
+```
+
+**Visueel**:
+- Statusbalk tekst verschilt per pagina
+- Update zonder volledige hertekening van body
+- WiFi-status links zichtbaar
+
+---
+
+### Fase 4 – NTP klok in header
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[NTP] synced: 14:37
+[NTP] time: 14:38
+```
+
+**Visueel**:
+- Tijd rechts in header zichtbaar (formaat `HH:MM`)
+- Klok update elke minuut zonder flicker van header
+- Wanneer WiFi niet verbonden: header toont `--:--`
+
+---
+
+### Fase 5 – WiFi reconnect + scherm-slaapstand
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial** (slaapstand):
+```
+[SLEEP] backlight off
+[SLEEP] backlight on
+```
+
+**Runtime Serial** (reconnect):
+```
+[WIFI] reconnect attempt...
+[WIFI] connected / not connected
+```
+
+**Visueel**:
+- Backlight gaat uit na ingestelde tijd zonder activiteit
+- Eerste touch/encoder-beweging wekt scherm (zonder actie door te sturen)
+- WiFi-icoon in statusbalk update na reconnect
+
+---
+
+### Fase 6 – OTA + voortgangsbalk
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[OTA] ready
+[OTA] progress: 25%
+[OTA] progress: 50%
+[OTA] progress: 100%
+[OTA] done
+```
+
+**Visueel**:
+- Voortgangsbalk zichtbaar op scherm tijdens upload
+- Percentage tekst update live
+- Na OTA: normaal herstarten
+
+---
+
+### Fase 7 – Pagina 3 Airco (eigen draw-functie)
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[AIRCO] temp=21 fan=0 mode=0 power=0
+[AIRCO] temp delta +1 -> 22
+[AIRCO] fan -> 1
+```
+
+**Visueel**:
+- Airco-pagina toont temperatuur, ventilator, modus en status
+- Enc1 draaien update temperatuur live op scherm
+- Enc1 klik scrollt ventilatiestand; highlight verschuift
+- Enc2 klik wisselt modus; highlight verschuift
+- Enc1 lang toggle power; status indicator verandert
+
+---
+
+### Fase 8 – Pagina 2 Audio
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[AUDIO] volume up
+[AUDIO] volume down
+[AUDIO] play/pause
+[AUDIO] source -> BT
+```
+
+**Visueel**:
+- Spotify placeholder (grijs vlak 100×100 + tekst) zichtbaar
+- Volume enc1 draaien stuurt IR zonder display-crash
+- Bronknoppen highlight actieve bron
+- Enc2 klik wisselt bron en update highlight
+
+---
+
+### Fase 9 – Pagina 1 Lamp (WLED + Hue)
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[WLED] scene: Film
+[WLED] brightness: 78
+[HUE] room: Woonkamer scene: Ontspannen
+[HUE] PUT status: 200
+```
+
+**Visueel**:
+- Subtab WLED/Hue wissel via enc1 klik
+- Scenes scrollen via enc1 draaien; actieve scene highlighted
+- Hue: enc2 klik wisselt kamer; naam update in header van subtab
+- Aan/Uit knoppen reageren op touch en enc1 lang
+
+---
+
+### Fase 10 – Pagina 0 RFID (enc1 navigatie + lees-modus)
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[RFID] field: brand -> 1
+[RFID] field: type -> 2
+[RFID] write armed
+[RFID] write done – SUCCESS
+[RFID] read: Creality PLA #FF6000
+```
+
+**Visueel**:
+- Enc1 draaien verschuift highlight tussen merk-knoppen
+- Enc1 klik springt naar volgende veld (merk → type → kleur)
+- Actief veld heeft witte rand rondom de rij
+- Enc1 lang toont "Gereed om te schrijven – houdt kaart voor" in statusbalk
+- Lees-subtab toont merk/type/kleur/gewicht/serie van gehouden kaart
+
+---
+
+### Fase 11 – Toast-notificaties
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[TOAST] Kaart geschreven
+[TOAST] WiFi verbonden
+```
+
+**Visueel**:
+- Overlay verschijnt 2 s boven actieve pagina
+- Overlay verdwijnt automatisch; onderliggende pagina intact
+- Geen hertekening van body bij verdwijnen
+
+---
+
+### Fase 12 – Pagina 4 Macro's
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[MACRO] Film: hue=20% warm, ac=20, audio=Line2
+[MACRO] Nacht: all off, ac=19
+```
+
+**Visueel**:
+- Macrolijst toont 4 ingebouwde macros
+- Enc1 draaien scrollt, actieve rij highlighted
+- Enc1 klik voert macro uit; toast "Film geactiveerd" verschijnt
+- Touch op rij = zelfde als enc1 klik
+
+---
+
+### Fase 13 – Pagina 5 Instellingen
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[SETTINGS] subtab: WiFi
+[SETTINGS] subtab: Display
+[SETTINGS] brightness: 80
+[SETTINGS] sleep: 5 min
+```
+
+**Visueel**:
+- 4 subtabs navigeerbaar via enc1 klik
+- Helderheid enc1 draaien past backlight live aan
+- Slaaptijd +/- knoppen werken
+- Kalibratie-knop start wizard
+
+---
+
+### Fase 14 – Spotify integratie
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[SPOTIFY] track: Artiest – Nummer
+[SPOTIFY] album art: 100x100 OK
+[SPOTIFY] poll: 200
+```
+
+**Visueel**:
+- Artiest en nummer zichtbaar op audio-pagina
+- Album art 100×100 geladen en getoond (geen artefacten)
+- Update elke 5 s zonder scherm-flicker
+
+---
+
+### Fase 15 – Temperatuursensor
+
+**Compile**: `pio run` zonder errors.
+
+**Runtime Serial**:
+```
+[TEMP] 21.4 C
+[TEMP] 21.6 C
+```
+
+**Visueel**:
+- Kamertemperatuur rechts in header naast klok: `14:37  21.4°C`
+- Update elke 10 s zonder header-flicker
+- Bij sensor niet aanwezig: header toont niets (geen crash)

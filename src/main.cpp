@@ -5,6 +5,7 @@
 #include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <ArduinoHttpClient.h>
+#include <ArduinoOTA.h>
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
 #include <ir_MitsubishiHeavy.h>
@@ -95,6 +96,16 @@ static const char* const kWledHosts[] = { "192.168.10.24", "192.168.10.232" };
 // Forward declarations
 void createKey();
 void loadConfig();
+void onMacroExecute(uint8_t idx);
+extern uint8_t displayGetPage();
+extern void displayNextPage();
+extern void displayPrevPage();
+extern void displayWakeup();
+extern void displayRfidFieldTurn(int delta);
+extern void displayRfidFieldNext();
+extern void displayMacroSelect(int delta);
+extern void displayMacroExecute();
+extern void displayShowOtaProgress(uint8_t pct);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -125,16 +136,6 @@ void onIrModeSelect(uint8_t mode)
     irControlMode = (mode == 0) ? IR_MODE_AUDIO : IR_MODE_AIRCO;
     displaySetIrMode(mode);
     lastEncPos = encoder.getPosition();
-    if (irControlMode == IR_MODE_AIRCO)
-    {
-        encoder2.setPosition((int)acFanIdx);
-        lastEnc2Pos = (int)acFanIdx;
-    }
-    else
-    {
-        encoder2.setPosition(0);
-        lastEnc2Pos = 0;
-    }
     displaySetLastAction(mode == 0 ? "Audio modus" : "Airco modus");
 }
 
@@ -241,28 +242,26 @@ void onIrAudio(uint8_t action)
 // ---------------------------------------------------------------------------
 void enc1ButtonClick()
 {
-    switch (irControlMode)
+    switch (displayGetPage())
     {
-    case IR_MODE_AUDIO:
+    case 0:  // RFID: veld wisselen
+        displayRfidFieldNext();
+        break;
+    case 2:  // Audio: play/pauze
         irsend.sendNEC(IR_PLAYPAUZE);
         displaySetLastAction("Play / Pauze");
         break;
-    case IR_MODE_AIRCO:
-        ac.setMode(kAcModes[acAcMode]);
-        ac.setTemp(acTemp);
-        ac.setFan(kFanSpeeds[acFanIdx]);
-        ac.setPower(true);
-        ac.send();
-        acPower = true;
-        displaySetLastAction("Airco ingeschakeld");
-        _syncAcDisplay();
+    case 3:  // Airco: ventilator omhoog
+        onIrFanChange((acFanIdx + 1) % kFanCount);
+        break;
+    default:
         break;
     }
 }
 
 void enc1ButtonDoubleClick()
 {
-    if (irControlMode != IR_MODE_AUDIO) return;
+    if (displayGetPage() != 2) return;
     toggleBluetooth = !toggleBluetooth;
     irsend.sendNEC(toggleBluetooth ? IR_BLUETOOTH : IR_LINE2);
     displaySetLastAction(toggleBluetooth ? "Bluetooth" : "Line 2");
@@ -270,64 +269,108 @@ void enc1ButtonDoubleClick()
 
 void enc1ButtonLongPress()
 {
-    switch (irControlMode)
+    switch (displayGetPage())
     {
-    case IR_MODE_AUDIO:
+    case 2:  // Audio: aan/uit
         irsend.sendNEC(IR_ONOFF);
         displaySetLastAction("Aan / Uit");
         break;
-    case IR_MODE_AIRCO:
-        ac.setPower(false);
-        ac.send();
-        acPower = false;
-        displaySetLastAction("Airco uitgeschakeld");
+    case 3:  // Airco: power toggle
+        if (acPower) {
+            ac.setPower(false); ac.send(); acPower = false;
+            displaySetLastAction("Airco uitgeschakeld");
+        } else {
+            ac.setMode(kAcModes[acAcMode]); ac.setTemp(acTemp);
+            ac.setFan(kFanSpeeds[acFanIdx]); ac.setPower(true); ac.send();
+            acPower = true;
+            displaySetLastAction("Airco ingeschakeld");
+        }
         _syncAcDisplay();
+        break;
+    default:
         break;
     }
 }
 
 void enc2ButtonClick()
 {
-    switch (irControlMode)
+    switch (displayGetPage())
     {
-    case IR_MODE_AUDIO:
-        _wledGet("/win&R=255&G=255&B=255");
-        displaySetLastAction("Wit licht");
+    case 0:  // RFID: veld wisselen
+        displayRfidFieldNext();
         break;
-    case IR_MODE_AIRCO:
-        onIrAcMode(2);  // Warm
+    case 2:  // Audio: bron wisselen
+    {
+        static const uint8_t kSrcActions[] = { IR_AUDIO_LINE1, IR_AUDIO_LINE2, IR_AUDIO_BLUETOOTH };
+        static uint8_t srcIdx = 0;
+        srcIdx = (srcIdx + 1) % 3;
+        onIrAudio(kSrcActions[srcIdx]);
+        break;
+    }
+    case 3:  // Airco: modus cyclus
+        onIrAcMode((acAcMode + 1) % 3);
+        break;
+    case 4:  // Macro's: geselecteerde uitvoeren
+        displayMacroExecute();
+        break;
+    default:
         break;
     }
 }
 
 void enc2ButtonDoubleClick()
 {
-    switch (irControlMode)
-    {
-    case IR_MODE_AUDIO:
-    {
-        static const uint8_t     kR[] = {  0,   0, 128, 255 };
-        static const uint8_t     kG[] = {  0, 255,   0,   0 };
-        static const uint8_t     kB[] = {255,   0, 128,   0 };
-        static const char* const kN[] = { "Blauw", "Groen", "Paars", "Rood" };
-        ledToggleIndex = (ledToggleIndex + 1) % 4;
-        _wledGet(String("/win&R=") + kR[ledToggleIndex]
-                 + "&G=" + kG[ledToggleIndex]
-                 + "&B=" + kB[ledToggleIndex]);
-        displaySetLastAction(kN[ledToggleIndex]);
-        break;
-    }
-    case IR_MODE_AIRCO:
-        onIrAcMode(1);  // Koel
-        break;
-    }
+    if (displayGetPage() != 2) return;
+    static const uint8_t     kR[] = {  0,   0, 128, 255 };
+    static const uint8_t     kG[] = {  0, 255,   0,   0 };
+    static const uint8_t     kB[] = {255,   0, 128,   0 };
+    static const char* const kN[] = { "Blauw", "Groen", "Paars", "Rood" };
+    ledToggleIndex = (ledToggleIndex + 1) % 4;
+    _wledGet(String("/win&R=") + kR[ledToggleIndex]
+             + "&G=" + kG[ledToggleIndex]
+             + "&B=" + kB[ledToggleIndex]);
+    displaySetLastAction(kN[ledToggleIndex]);
 }
 
 void enc2ButtonLongPress()
 {
-    if (irControlMode != IR_MODE_AUDIO) return;
-    _wledGet("/win&A=38");  // ~15% helderheid
-    displaySetLastAction("LED dimmen 15%");
+    if (displayGetPage() == 2)
+    {
+        _wledGet("/win&A=38");  // ~15% helderheid
+        displaySetLastAction("LED dimmen 15%");
+    }
+    else
+    {
+        displaySetPage(5);  // Instellingen
+    }
+}
+
+void onMacroExecute(uint8_t idx)
+{
+    static const char* const names[]    = { "Film", "Lezen", "Nacht", "Gaming" };
+    static const uint8_t     temps[]    = { 20, 21, 19, 22 };
+    static const uint8_t     modes[]    = { 1, 0, 0, 1 };    // Koel, Auto, Auto, Koel
+    static const bool        allOff[]   = { false, false, true, false };
+    static const uint8_t     audio[]    = { IR_AUDIO_LINE2, 0xFF, IR_AUDIO_ONOFF, IR_AUDIO_BLUETOOTH };
+    if (idx >= 4) return;
+    acTemp   = temps[idx];
+    acFanIdx = 0;
+    acAcMode = modes[idx];
+    ac.setTemp(acTemp);
+    ac.setFan(kFanSpeeds[0]);
+    ac.setMode(kAcModes[acAcMode]);
+    if (allOff[idx]) {
+        ac.setPower(false); acPower = false;
+    } else {
+        ac.setPower(true); acPower = true;
+    }
+    ac.send();
+    if (audio[idx] != 0xFF) onIrAudio(audio[idx]);
+    _syncAcDisplay();
+    char msg[32];
+    snprintf(msg, sizeof(msg), "Macro: %s", names[idx]);
+    displaySetLastAction(msg);
+    Serial.printf("[MACRO] %s\n", names[idx]);
 }
 
 void setup()
@@ -405,6 +448,17 @@ void setup()
       while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) delay(100);
       wifiOk = (WiFi.status() == WL_CONNECTED);
       Serial.println(wifiOk ? "[WiFi] connected: " + WiFi.localIP().toString() : "[WiFi] not connected");
+      if (wifiOk)
+      {
+        configTime(3600, 3600, "pool.ntp.org");
+        Serial.println("[NTP] configured");
+        ArduinoOTA.setHostname("K2-RFID");
+        ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+            displayShowOtaProgress((uint8_t)(progress * 100 / total));
+        });
+        ArduinoOTA.begin();
+        Serial.println("[OTA] ready");
+      }
     }
     else
     {
@@ -425,53 +479,78 @@ void loop()
   enc1Btn.tick();
   enc2Btn.tick();
 
-  // Rotary encoder 1 – volume (Audio) or temperature (Airco)
+  // Rotary encoder 1 – RFID veld (pagina 0), volume (pagina 2) of temperatuur (pagina 3)
   {
     int newEncPos = encoder.getPosition();
     if (newEncPos != lastEncPos)
     {
       int delta = newEncPos - lastEncPos;
       lastEncPos = newEncPos;
-      if (irControlMode == IR_MODE_AUDIO)
+      displayWakeup();
+      switch (displayGetPage())
       {
-        int steps = min(abs(delta), 5);
-        for (int i = 0; i < steps; i++)
-          irsend.sendNEC(delta > 0 ? IR_VOLUP : IR_VOLDOWN);
-        displaySetLastAction(delta > 0 ? "Volume +" : "Volume -");
+      case 0:  // RFID veld navigatie
+          displayRfidFieldTurn(delta);
+          break;
+      case 2:  // Audio volume
+      {
+          int steps = min(abs(delta), 5);
+          for (int i = 0; i < steps; i++)
+              irsend.sendNEC(delta > 0 ? IR_VOLUP : IR_VOLDOWN);
+          displaySetLastAction(delta > 0 ? "Volume +" : "Volume -");
+          break;
       }
-      else
-      {
-        onIrTempDelta(delta > 0 ? 1 : -1);
+      case 3:  // Airco temperatuur
+          onIrTempDelta(delta > 0 ? 1 : -1);
+          break;
+      case 4:  // Macro's selecteren
+          displayMacroSelect(delta);
+          break;
+      default:
+          break;
       }
     }
   }
 
-  // Rotary encoder 2 – track skip (Audio) or fan speed (Airco)
+  // Rotary encoder 2 – paginanavigatie (alle pagina's)
   {
     int newEnc2Pos = encoder2.getPosition();
     if (newEnc2Pos != lastEnc2Pos)
     {
       int delta = newEnc2Pos - lastEnc2Pos;
       lastEnc2Pos = newEnc2Pos;
-      if (irControlMode == IR_MODE_AUDIO)
-      {
-        irsend.sendNEC(delta > 0 ? IR_FORWARD : IR_BACKWARD);
-        displaySetLastAction(delta > 0 ? "Volgend" : "Vorig");
-      }
-      else
-      {
-        int newFan = constrain((int)acFanIdx + (delta > 0 ? 1 : -1), 0, (int)kFanCount - 1);
-        onIrFanChange((uint8_t)newFan);
-        // Sync encoder position to avoid drift
-        encoder2.setPosition((int)acFanIdx);
-        lastEnc2Pos = (int)acFanIdx;
-      }
+      displayWakeup();
+      if (delta > 0) displayNextPage();
+      else           displayPrevPage();
     }
   }
 
   // Block RFID processing during post-write cooldown
   if (millis() < _rfidBusyUntil)
     return;
+
+  // WiFi reconnect elke 30 s
+  {
+    static unsigned long _lastWifiRetry = 0;
+    if (!wifiOk && millis() - _lastWifiRetry > 30000)
+    {
+      _lastWifiRetry = millis();
+      WiFi.reconnect();
+      unsigned long t0 = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3000) delay(100);
+      wifiOk = (WiFi.status() == WL_CONNECTED);
+      if (wifiOk)
+      {
+        displaySetWifi(true);
+        Serial.println("[WiFi] reconnected");
+        configTime(3600, 3600, "pool.ntp.org");
+        ArduinoOTA.begin();
+      }
+    }
+  }
+
+  // OTA handle
+  if (wifiOk) ArduinoOTA.handle();
 
   // Periodic MFRC522 health dump every 5 s (only in debug builds)
 #ifdef DEBUG
