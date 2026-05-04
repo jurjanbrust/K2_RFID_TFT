@@ -4,19 +4,25 @@
 #include <Preferences.h>
 
 // ---------------------------------------------------------------------------
-// Hardware layout  –  UICPAL ESP32-S3-N16R8 DevKit
+// Hardware layout  –  Regular ESP32 DevKit
 //
-// Display  (ST7796S, hardware SPI2, 320x480 native, landscape = 480x320):
-//   LCD_CLK  GPIO3   LCD_MOSI GPIO45  LCD_MISO GPIO46
-//   LCD_CS   GPIO14  LCD_DC   GPIO47  LCD_RST  GPIO21
-//   LCD_BL   GPIO9   (HIGH = on)
+// Display  (ST7796S, HSPI, 320x480 native, landscape = 480x320):
+//   LCD_MOSI GPIO13  LCD_CLK  GPIO14  LCD_MISO GPIO12
+//   LCD_CS   GPIO15  LCD_DC   GPIO27  LCD_RST  GPIO26
+//   LCD_BL   GPIO25  (HIGH = on)
 //
-// Touch  (XPT2046, bit-bang SPI – separate from display SPI):
-//   T_CLK  GPIO42   T_DIN  GPIO2   T_DO  GPIO41   T_CS  GPIO1
+// Touch  (XPT2046, bit-bang SPI):
+//   T_CLK  GPIO32   T_DIN  GPIO33   T_DO  GPIO35   T_CS  GPIO21
 //   T_IRQ  not connected
 //
-// NOTE: MFRC522 RST moved to GPIO16 to free GPIO21 for TFT RST.
-//       MFRC522 shares the hardware SPI2 bus (CLK=3, MISO=46, MOSI=45).
+// MFRC522 RFID (VSPI):
+//   SCK  GPIO18  MOSI GPIO23  MISO GPIO19  SS GPIO5  RST GPIO17
+//
+// Rotary Encoder 1 (volume / IR):
+//   A  GPIO4   B  GPIO2   BTN  GPIO34  (input-only – 10kΩ external pull-up to 3V3)
+//
+// Rotary Encoder 2:
+//   A  GPIO36/SVP   B  GPIO39/SVN   BTN  GPIO16  (INPUT_PULLUP)
 //
 // Calibration stored in NVS namespace "tcal2".
 // Run calibration wizard via http://10.1.0.1/calibrate
@@ -25,10 +31,10 @@
 // ---------------------------------------------------------------------------
 // Touch pin definitions (bit-bang SPI)
 // ---------------------------------------------------------------------------
-#define _T_CLK  42
-#define _T_CS    1
-#define _T_DIN   2
-#define _T_DO   41
+#define _T_CLK  32
+#define _T_CS   21
+#define _T_DIN  33
+#define _T_DO   35
 
 #define _T_Z_THRESH   200   // Z pressure threshold (0-4095)
 #define _T_SAMPLES      8   // averaging samples per reading
@@ -57,6 +63,7 @@ enum WriteStatus
 #define CLR_ERROR_BG   0x8000
 #define CLR_WRITING_BG 0x8420
 #define CLR_IDLE_BG    0x2104
+#define CLR_STATUS_BG  0x1082  // IR Control status bar
 
 extern String spoolData;
 
@@ -75,6 +82,37 @@ static unsigned long _lastTouch    = 0;
 static int32_t  _calX1    = 300,  _calX2    = 3800;
 static int32_t  _calY1    = 300,  _calY2    = 3800;
 static uint8_t  _calFlags = 0;
+
+// ---------------------------------------------------------------------------
+// IR Control page state  (set via public API from main.cpp)
+// ---------------------------------------------------------------------------
+static uint8_t  _currentPage  = 0;    // 0 = RFID writer, 1 = IR Control
+static uint8_t  _irMode       = 0;    // 0 = Audio, 1 = Airco
+static uint8_t  _aircoTemp    = 21;
+static uint8_t  _aircoFanIdx  = 0;    // 0 = Auto … 4 = Max
+static uint8_t  _aircoAcMode  = 0;    // 0 = auto, 1 = cool, 2 = heat
+static bool     _aircoPower   = false;
+static bool     _wifiOk       = false;
+static char     _lastIrAction[48] = "Gereed";
+static const char* const _fanLabels[]    = { "Auto","Laag","Mid","Hoog","Max" };
+static const char* const _acModeLabels[] = { "Auto","Koel","Warm" };
+
+// Audio action codes passed to onIrAudio() callback
+#define IR_AUDIO_PLAYPAUSE  0
+#define IR_AUDIO_PREV       1
+#define IR_AUDIO_NEXT       2
+#define IR_AUDIO_ONOFF      3
+#define IR_AUDIO_LINE1      4
+#define IR_AUDIO_LINE2      5
+#define IR_AUDIO_BLUETOOTH  6
+
+// Callbacks implemented in main.cpp
+extern void onIrTempDelta(int delta);
+extern void onIrFanChange(uint8_t idx);
+extern void onIrAcMode(uint8_t mode);    // 0=auto, 1=cool, 2=heat
+extern void onIrPower(bool on);
+extern void onIrAudio(uint8_t action);
+extern void onIrModeSelect(uint8_t mode); // 0=Audio, 1=Airco
 
 static char _dMaterial[8] = "--";
 static char _dColor[8]    = "000000";
@@ -313,12 +351,21 @@ static void _btn(int16_t x, int16_t y, int16_t w, int16_t h,
 
 static void _drawHeader()
 {
-    _tft->fillRect(0, 0, 480, 48, CLR_HEADER_BG);
-    _tft->setTextColor(TFT_WHITE, CLR_HEADER_BG);
+    // Two tab buttons: left = K2 RFID (page 0), right = IR Control (page 1)
+    uint16_t bg0 = (_currentPage == 0) ? CLR_ACCENT : 0x2945;
+    uint16_t bg1 = (_currentPage == 1) ? CLR_ACCENT : 0x2945;
+    _tft->fillRect(  0, 0, 239, 48, bg0);
+    _tft->fillRect(241, 0, 239, 48, bg1);
+    _tft->fillRect(239, 8,   2, 32, CLR_HEADER_BG);  // divider
     _tft->setTextFont(4);
-    int16_t tw = _tft->textWidth("K2 RFID Writer");
-    _tft->setCursor((480 - tw) / 2, 8);
-    _tft->print("K2 RFID Writer");
+    _tft->setTextColor(TFT_WHITE, bg0);
+    int16_t tw = _tft->textWidth("K2 RFID");
+    _tft->setCursor((239 - tw) / 2, 11);
+    _tft->print("K2 RFID");
+    _tft->setTextColor(TFT_WHITE, bg1);
+    tw = _tft->textWidth("IR Control");
+    _tft->setCursor(241 + (239 - tw) / 2, 11);
+    _tft->print("IR Control");
 }
 
 static void _drawStatusBar()
@@ -388,6 +435,174 @@ static void _drawMainPage()
     }
 
     _drawStatusBar();
+}
+
+// ---------------------------------------------------------------------------
+// IR Control page drawing
+// ---------------------------------------------------------------------------
+static void _drawIrStatusBar()
+{
+    _tft->fillRect(0, 276, 480, 44, CLR_STATUS_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_STATUS_BG);
+    _tft->setCursor(8, 283);
+    String line = String(_wifiOk ? "WiFi: OK   " : "WiFi: --   ") + _lastIrAction;
+    if (line.length() > 54) line = line.substring(0, 54);
+    _tft->print(line);
+}
+
+static void _drawIrPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    // ── Mode toggle  y=54..93 ────────────────────────────────────────────
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(8, 69);
+    _tft->print("Modus:");
+    _btn(100, 54, 120, 38, "Audio", _irMode == 0);
+    _btn(228, 54, 120, 38, "Airco", _irMode == 1);
+
+    if (_irMode == 0)
+    {
+        // ── AUDIO ────────────────────────────────────────────────────────
+        // Bron  y=100..134
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(8, 113);
+        _tft->print("Bron:");
+        _btn( 88, 100,  86, 32, "Line 1",    false, 2);
+        _btn(179, 100,  86, 32, "Line 2",    false, 2);
+        _btn(270, 100, 116, 32, "Bluetooth", false, 2);
+
+        // Afspelen  y=142..186
+        _btn(  8, 142, 140, 42, "< Vorig",       false);
+        _btn(156, 142, 168, 42, "Play / Pauze",  false, 2);
+        _btn(332, 142, 140, 42, "Volgend >",      false);
+
+        // Aan/Uit + encoder hint  y=196..230
+        _btn(8, 196, 190, 32, "Aan / Uit", false);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(210, 206);
+        _tft->print("Encoder = volume");
+
+        // Legenda  y=242..262
+        _tft->setTextColor(0xAD55, CLR_BODY_BG);
+        _tft->setCursor(8, 244);
+        _tft->print("Line 1=wit  |  Line 2=blauw  |  BT=paars");
+    }
+    else
+    {
+        // ── AIRCO ────────────────────────────────────────────────────────
+        // Temperatuur  y=100..158
+        uint16_t tempBg = _aircoPower ? CLR_HEADER_BG : CLR_IDLE_BG;
+        _tft->fillRect(88, 100, 304, 58, tempBg);
+        _tft->drawRect(88, 100, 304, 58, CLR_ACCENT);
+        char tmpBuf[8];
+        snprintf(tmpBuf, sizeof(tmpBuf), "%d C", _aircoTemp);
+        _tft->setTextFont(6);
+        _tft->setTextColor(TFT_WHITE, tempBg);
+        int16_t tw = _tft->textWidth(tmpBuf);
+        _tft->setCursor(88 + (304 - tw) / 2, 109);
+        _tft->print(tmpBuf);
+        _btn(  8, 110, 74, 38, " - ", false);
+        _btn(398, 110, 74, 38, " + ", false);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(88, 162);
+        _tft->print("Encoder draait ook de temperatuur");
+
+        // Airco modus  y=170..206
+        _btn(  8, 170, 150, 34, "Koelen",    _aircoAcMode == 1);
+        _btn(166, 170, 150, 34, "Verwarmen", _aircoAcMode == 2);
+        _btn(324, 170, 148, 34, "Auto",      _aircoAcMode == 0);
+
+        // Ventilator  y=212..242
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(8, 224);
+        _tft->print("Ventil:");
+        for (uint8_t i = 0; i < 5; i++)
+            _btn(82 + i * 78, 212, 74, 28, _fanLabels[i], _aircoFanIdx == i, 2);
+
+        // Aan / Uit  y=248..272
+        uint16_t aanBg = _aircoPower ? CLR_SUCCESS_BG : 0x2945;
+        uint16_t uitBg = _aircoPower ? 0x2945        : CLR_ERROR_BG;
+        _tft->fillRoundRect(  8, 248, 226, 24, 4, aanBg);
+        _tft->fillRoundRect(246, 248, 226, 24, 4, uitBg);
+        int16_t tw2;
+        _tft->setTextFont(2);
+        _tft->setTextColor(TFT_WHITE, aanBg);
+        tw2 = _tft->textWidth("Inschakelen");
+        _tft->setCursor(8   + (226 - tw2) / 2, 252);
+        _tft->print("Inschakelen");
+        _tft->setTextColor(TFT_WHITE, uitBg);
+        tw2 = _tft->textWidth("Uitschakelen");
+        _tft->setCursor(246 + (226 - tw2) / 2, 252);
+        _tft->print("Uitschakelen");
+    }
+    _drawIrStatusBar();
+}
+
+static void _handleIrPageTouch(uint16_t tx, uint16_t ty)
+{
+    // Mode toggle  y=54..93
+    if (ty >= 54 && ty <= 93)
+    {
+        if (tx >= 100 && tx <= 220) onIrModeSelect(0);  // Audio
+        if (tx >= 228 && tx <= 348) onIrModeSelect(1);  // Airco
+        return;
+    }
+
+    if (_irMode == 0)
+    {
+        // AUDIO
+        if (ty >= 100 && ty <= 134)
+        {
+            if (tx >=  88 && tx <= 174) onIrAudio(IR_AUDIO_LINE1);
+            if (tx >= 179 && tx <= 265) onIrAudio(IR_AUDIO_LINE2);
+            if (tx >= 270 && tx <= 386) onIrAudio(IR_AUDIO_BLUETOOTH);
+            return;
+        }
+        if (ty >= 142 && ty <= 186)
+        {
+            if (tx >=   8 && tx <= 148) onIrAudio(IR_AUDIO_PREV);
+            if (tx >= 156 && tx <= 324) onIrAudio(IR_AUDIO_PLAYPAUSE);
+            if (tx >= 332 && tx <= 472) onIrAudio(IR_AUDIO_NEXT);
+            return;
+        }
+        if (ty >= 196 && ty <= 230 && tx <= 198) onIrAudio(IR_AUDIO_ONOFF);
+    }
+    else
+    {
+        // AIRCO
+        if (ty >= 110 && ty <= 148)
+        {
+            if (tx <=  82) onIrTempDelta(-1);
+            if (tx >= 398) onIrTempDelta(+1);
+            return;
+        }
+        if (ty >= 170 && ty <= 206)
+        {
+            if (tx >=   8 && tx <= 158) onIrAcMode(1);  // Koelen
+            if (tx >= 166 && tx <= 316) onIrAcMode(2);  // Verwarmen
+            if (tx >= 324 && tx <= 472) onIrAcMode(0);  // Auto
+            return;
+        }
+        if (ty >= 212 && ty <= 242 && tx >= 82)
+        {
+            uint8_t idx = (tx - 82) / 78;
+            if (idx < 5) onIrFanChange(idx);
+            return;
+        }
+        if (ty >= 248 && ty <= 272)
+        {
+            if (tx <= 234) onIrPower(true);
+            else           onIrPower(false);
+            return;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -493,8 +708,8 @@ bool displayIsSettingsPage() { return false; }
 
 void displayInit()
 {
-    pinMode(9, OUTPUT);
-    digitalWrite(9, HIGH);  // backlight on
+    pinMode(25, OUTPUT);
+    digitalWrite(25, HIGH);  // backlight on
 
     // Touch bit-bang pins
     pinMode(_T_CLK, OUTPUT); digitalWrite(_T_CLK, LOW);
@@ -536,8 +751,8 @@ void displaySetStatus(WriteStatus status)
 
 void displayLoop()
 {
-    // Auto-reset status bar
-    if (_statusUntil > 0 && millis() > _statusUntil)
+    // Auto-reset RFID status bar
+    if (_currentPage == 0 && _statusUntil > 0 && millis() > _statusUntil)
     {
         _statusUntil = 0;
         _rfidStatus  = STATUS_IDLE;
@@ -550,9 +765,28 @@ void displayLoop()
     _lastTouch = millis();
     Serial.printf("[TOUCH] x=%d y=%d\n", tx, ty);
 
-    if (ty < 48) return;  // header – geen actie
+    // ── Header tap: switch page ──────────────────────────────────────────
+    if (ty < 48)
+    {
+        uint8_t newPage = (tx < 240) ? 0 : 1;
+        if (newPage != _currentPage)
+        {
+            _currentPage = newPage;
+            _drawHeader();
+            if (_currentPage == 0) _drawMainPage();
+            else                   _drawIrPage();
+        }
+        return;
+    }
 
-    // ── Main page buttons ─────────────────────────────────────────────────
+    // ── Route to active page ─────────────────────────────────────────────
+    if (_currentPage == 1)
+    {
+        _handleIrPageTouch(tx, ty);
+        return;
+    }
+
+    // ── RFID page touch ──────────────────────────────────────────────────
     {
         // Brand buttons: y=52..92, x=162..472 (4 × 79px)
         if (ty >= 52 && ty <= 92 && tx >= 162)
@@ -602,4 +836,44 @@ void displayLoop()
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Public API – IR Control page
+// ---------------------------------------------------------------------------
+void displaySetPage(uint8_t page)
+{
+    if (page == _currentPage) return;
+    _currentPage = page;
+    _drawHeader();
+    if (page == 0) _drawMainPage();
+    else           _drawIrPage();
+}
+
+void displaySetIrMode(uint8_t mode)
+{
+    _irMode = mode;
+    if (_currentPage == 1) _drawIrPage();
+}
+
+void displayUpdateAirco(uint8_t temp, uint8_t fanIdx, uint8_t acMode, bool power)
+{
+    _aircoTemp   = temp;
+    _aircoFanIdx = fanIdx;
+    _aircoAcMode = acMode;
+    _aircoPower  = power;
+    if (_currentPage == 1 && _irMode == 1) _drawIrPage();
+}
+
+void displaySetWifi(bool ok)
+{
+    _wifiOk = ok;
+    if (_currentPage == 1) _drawIrStatusBar();
+}
+
+void displaySetLastAction(const char* action)
+{
+    strncpy(_lastIrAction, action, sizeof(_lastIrAction) - 1);
+    _lastIrAction[sizeof(_lastIrAction) - 1] = '\0';
+    if (_currentPage == 1) _drawIrStatusBar();
 }
