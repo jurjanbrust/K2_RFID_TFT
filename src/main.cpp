@@ -10,6 +10,7 @@
 #include <ir_MitsubishiHeavy.h>
 #include <RotaryEncoder.h>
 #include "includes.h"
+#include <OneButton.h>
 
 #define SS_PIN  5
 #define RST_PIN 17
@@ -52,6 +53,17 @@ RotaryEncoder encoder(ENC_A_PIN, ENC_B_PIN, RotaryEncoder::LatchMode::TWO03);
 RotaryEncoder encoder2(ENC2_A_PIN, ENC2_B_PIN, RotaryEncoder::LatchMode::TWO03);
 IRAM_ATTR void encoderISR()  { encoder.tick(); }
 IRAM_ATTR void encoder2ISR() { encoder2.tick(); }
+
+OneButton enc1Btn(ENC_BTN_PIN,  true);  // left encoder button (active low)
+OneButton enc2Btn(ENC2_BTN_PIN, true);  // right encoder button (active low)
+
+static bool          toggleBluetooth  = false;
+static uint8_t       ledToggleIndex   = 0;
+static int           lastEnc2Pos      = 0;
+static unsigned long _rfidBusyUntil   = 0;
+#ifdef DEBUG
+static unsigned long _lastRfidDbg = 0;
+#endif
 
 enum IrControlMode { IR_MODE_AUDIO = 0, IR_MODE_AIRCO = 1 };
 static IrControlMode irControlMode = IR_MODE_AUDIO;
@@ -113,6 +125,16 @@ void onIrModeSelect(uint8_t mode)
     irControlMode = (mode == 0) ? IR_MODE_AUDIO : IR_MODE_AIRCO;
     displaySetIrMode(mode);
     lastEncPos = encoder.getPosition();
+    if (irControlMode == IR_MODE_AIRCO)
+    {
+        encoder2.setPosition((int)acFanIdx);
+        lastEnc2Pos = (int)acFanIdx;
+    }
+    else
+    {
+        encoder2.setPosition(0);
+        lastEnc2Pos = 0;
+    }
     displaySetLastAction(mode == 0 ? "Audio modus" : "Airco modus");
 }
 
@@ -213,6 +235,101 @@ void onIrAudio(uint8_t action)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Encoder button handlers – ported from IRremote project
+// enc1Btn = left (was BLAUW_BTN),  enc2Btn = right (was GROEN_BTN)
+// ---------------------------------------------------------------------------
+void enc1ButtonClick()
+{
+    switch (irControlMode)
+    {
+    case IR_MODE_AUDIO:
+        irsend.sendNEC(IR_PLAYPAUZE);
+        displaySetLastAction("Play / Pauze");
+        break;
+    case IR_MODE_AIRCO:
+        ac.setMode(kAcModes[acAcMode]);
+        ac.setTemp(acTemp);
+        ac.setFan(kFanSpeeds[acFanIdx]);
+        ac.setPower(true);
+        ac.send();
+        acPower = true;
+        displaySetLastAction("Airco ingeschakeld");
+        _syncAcDisplay();
+        break;
+    }
+}
+
+void enc1ButtonDoubleClick()
+{
+    if (irControlMode != IR_MODE_AUDIO) return;
+    toggleBluetooth = !toggleBluetooth;
+    irsend.sendNEC(toggleBluetooth ? IR_BLUETOOTH : IR_LINE2);
+    displaySetLastAction(toggleBluetooth ? "Bluetooth" : "Line 2");
+}
+
+void enc1ButtonLongPress()
+{
+    switch (irControlMode)
+    {
+    case IR_MODE_AUDIO:
+        irsend.sendNEC(IR_ONOFF);
+        displaySetLastAction("Aan / Uit");
+        break;
+    case IR_MODE_AIRCO:
+        ac.setPower(false);
+        ac.send();
+        acPower = false;
+        displaySetLastAction("Airco uitgeschakeld");
+        _syncAcDisplay();
+        break;
+    }
+}
+
+void enc2ButtonClick()
+{
+    switch (irControlMode)
+    {
+    case IR_MODE_AUDIO:
+        _wledGet("/win&R=255&G=255&B=255");
+        displaySetLastAction("Wit licht");
+        break;
+    case IR_MODE_AIRCO:
+        onIrAcMode(2);  // Warm
+        break;
+    }
+}
+
+void enc2ButtonDoubleClick()
+{
+    switch (irControlMode)
+    {
+    case IR_MODE_AUDIO:
+    {
+        static const uint8_t     kR[] = {  0,   0, 128, 255 };
+        static const uint8_t     kG[] = {  0, 255,   0,   0 };
+        static const uint8_t     kB[] = {255,   0, 128,   0 };
+        static const char* const kN[] = { "Blauw", "Groen", "Paars", "Rood" };
+        ledToggleIndex = (ledToggleIndex + 1) % 4;
+        _wledGet(String("/win&R=") + kR[ledToggleIndex]
+                 + "&G=" + kG[ledToggleIndex]
+                 + "&B=" + kB[ledToggleIndex]);
+        displaySetLastAction(kN[ledToggleIndex]);
+        break;
+    }
+    case IR_MODE_AIRCO:
+        onIrAcMode(1);  // Koel
+        break;
+    }
+}
+
+void enc2ButtonLongPress()
+{
+    if (irControlMode != IR_MODE_AUDIO) return;
+    _wledGet("/win&A=38");  // ~15% helderheid
+    displaySetLastAction("LED dimmen 15%");
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -262,6 +379,14 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(ENC2_B_PIN), encoder2ISR, CHANGE);
   pinMode(ENC2_BTN_PIN, INPUT_PULLUP);
 
+  // Encoder button callbacks
+  enc1Btn.attachClick(enc1ButtonClick);
+  enc1Btn.attachDoubleClick(enc1ButtonDoubleClick);
+  enc1Btn.attachLongPressStart(enc1ButtonLongPress);
+  enc2Btn.attachClick(enc2ButtonClick);
+  enc2Btn.attachDoubleClick(enc2ButtonDoubleClick);
+  enc2Btn.attachLongPressStart(enc2ButtonLongPress);
+
   // Airco: defaults
   ac.setFan(kFanSpeeds[0]);
   ac.set3D(true);
@@ -297,8 +422,10 @@ static unsigned long _lastRfidDbg = 0;
 void loop()
 {
   displayLoop();
+  enc1Btn.tick();
+  enc2Btn.tick();
 
-  // Rotary encoder – volume (Audio) or temperature (Airco)
+  // Rotary encoder 1 – volume (Audio) or temperature (Airco)
   {
     int newEncPos = encoder.getPosition();
     if (newEncPos != lastEncPos)
@@ -319,13 +446,42 @@ void loop()
     }
   }
 
-  // Periodic MFRC522 health dump every 5 s
+  // Rotary encoder 2 – track skip (Audio) or fan speed (Airco)
+  {
+    int newEnc2Pos = encoder2.getPosition();
+    if (newEnc2Pos != lastEnc2Pos)
+    {
+      int delta = newEnc2Pos - lastEnc2Pos;
+      lastEnc2Pos = newEnc2Pos;
+      if (irControlMode == IR_MODE_AUDIO)
+      {
+        irsend.sendNEC(delta > 0 ? IR_FORWARD : IR_BACKWARD);
+        displaySetLastAction(delta > 0 ? "Volgend" : "Vorig");
+      }
+      else
+      {
+        int newFan = constrain((int)acFanIdx + (delta > 0 ? 1 : -1), 0, (int)kFanCount - 1);
+        onIrFanChange((uint8_t)newFan);
+        // Sync encoder position to avoid drift
+        encoder2.setPosition((int)acFanIdx);
+        lastEnc2Pos = (int)acFanIdx;
+      }
+    }
+  }
+
+  // Block RFID processing during post-write cooldown
+  if (millis() < _rfidBusyUntil)
+    return;
+
+  // Periodic MFRC522 health dump every 5 s (only in debug builds)
+#ifdef DEBUG
   if (millis() - _lastRfidDbg > 5000)
   {
     _lastRfidDbg = millis();
     byte v = mfrc522.PCD_ReadRegister(MFRC522::VersionReg);
     Serial.printf("[RFID] version=0x%02X IRQ=%d\n", v, mfrc522.PCD_ReadRegister(MFRC522::ComIrqReg));
   }
+#endif
 
   if (!mfrc522.PICC_IsNewCardPresent())
     return;
@@ -350,7 +506,7 @@ void loop()
   if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI && piccType != MFRC522::PICC_TYPE_MIFARE_1K && piccType != MFRC522::PICC_TYPE_MIFARE_4K)
   {
     Serial.println("[RFID] unsupported card type – skipping");
-    delay(2000);
+    _rfidBusyUntil = millis() + 2000;
     return;
   }
 
@@ -361,23 +517,22 @@ void loop()
   Serial.printf("[RFID] auth key A: %s\n", MFRC522::GetStatusCodeName(status));
   if (status != MFRC522::STATUS_OK)
   {
-    if (!mfrc522.PICC_IsNewCardPresent())
-      return;
-    if (!mfrc522.PICC_ReadCardSerial())
-      return;
+    // Retry with encrypted key – reuse the already-read UID, do NOT re-read the card
+    // (re-reading could race with a different card being presented)
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &ekey, &(mfrc522.uid));
     Serial.printf("[RFID] auth ekey: %s\n", MFRC522::GetStatusCodeName(status));
     if (status != MFRC522::STATUS_OK)
     {
       displaySetStatus(STATUS_ERROR);
-      delay(2000);
+      _rfidBusyUntil = millis() + 2000;
       return;
     }
     encrypted = true;
   }
 
   // ── Read blocks 4-6 (altijd) ──────────────────────────────────────────
-  String readBack = "";
+  char readBack[49] = {};
+  int  readBackLen  = 0;
   for (int blk = 4; blk <= 6; blk++)
   {
     byte buf[18]; byte len = sizeof(buf);
@@ -385,25 +540,21 @@ void loop()
     {
       byte dec[16];
       aes.encrypt(0, buf, dec);
-      for (int j = 0; j < 16; j++) readBack += (char)dec[j];
+      for (int j = 0; j < 16 && readBackLen < 48; j++)
+        readBack[readBackLen++] = (char)dec[j];
     }
   }
-  Serial.println("[RFID] card data: " + readBack);
+  Serial.printf("[RFID] card data: %.*s\n", readBackLen, readBack);
 
   displaySetStatus(STATUS_WRITING);
 
   byte blockData[17];
   byte encData[16];
-  int blockID = 4;
-  for (int i = 0; i < spoolData.length(); i += 16)
+  for (int i = 0, blockID = 4; i < spoolData.length() && blockID < 7; i += 16, blockID++)
   {
     spoolData.substring(i, i + 16).getBytes(blockData, 17);
-    if (blockID >= 4 && blockID < 7)
-    {
-      aes.encrypt(1, blockData, encData);
-      mfrc522.MIFARE_Write(blockID, encData, 16);
-    }
-    blockID++;
+    aes.encrypt(1, blockData, encData);
+    mfrc522.MIFARE_Write(blockID, encData, 16);
   }
 
   if (!encrypted)
@@ -427,7 +578,8 @@ void loop()
 
   // ── Verificatie: lees terug wat geschreven is ─────────────────────────
   {
-    String verifyBack = "";
+    char verifyBack[49] = {};
+    int  verifyBackLen  = 0;
     for (int blk = 4; blk <= 6; blk++)
     {
       byte buf[18]; byte len = sizeof(buf);
@@ -435,19 +587,20 @@ void loop()
       {
         byte dec[16];
         aes.encrypt(0, buf, dec);
-        for (int j = 0; j < 16; j++) verifyBack += (char)dec[j];
+        for (int j = 0; j < 16 && verifyBackLen < 48; j++)
+          verifyBack[verifyBackLen++] = (char)dec[j];
       }
     }
-    Serial.println("[RFID] verify readback: " + verifyBack);
-    if (verifyBack.length() >= 31)
-      displayUpdateSpool(verifyBack);
+    Serial.printf("[RFID] verify readback: %.*s\n", verifyBackLen, verifyBack);
+    if (verifyBackLen >= 31)
+      displayUpdateSpool(String(verifyBack));
   }
 
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
   Serial.println("[RFID] write done – SUCCESS");
   displaySetStatus(STATUS_SUCCESS);
-  delay(2000);
+  _rfidBusyUntil = millis() + 2000;
 }
 
 void createKey()
