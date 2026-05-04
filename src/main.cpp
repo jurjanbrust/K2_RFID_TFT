@@ -27,9 +27,9 @@ bool encrypted = false;
 // IR + Encoder hardware
 // ---------------------------------------------------------------------------
 #define IR_SEND_PIN   22   // IR LED (38 kHz carrier via PWM)
-#define ENC_A_PIN      4   // Encoder 1 channel A
+#define ENC_A_PIN     34   // Encoder 1 channel A (input-only, supports interrupts)
 #define ENC_B_PIN      2   // Encoder 1 channel B
-#define ENC_BTN_PIN   34   // Encoder 1 button (input-only – needs external 10kΩ pull-up)
+#define ENC_BTN_PIN    4   // Encoder 1 button (INPUT_PULLUP)
 #define ENC2_A_PIN    36   // Encoder 2 channel A (SVP, input-only)
 #define ENC2_B_PIN    39   // Encoder 2 channel B (SVN, input-only)
 #define ENC2_BTN_PIN  16   // Encoder 2 button (supports INPUT_PULLUP)
@@ -255,7 +255,7 @@ void setup()
   // Rotary encoder 1 (interrupt-driven)
   attachInterrupt(digitalPinToInterrupt(ENC_A_PIN), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B_PIN), encoderISR, CHANGE);
-  pinMode(ENC_BTN_PIN, INPUT);  // input-only GPIO – external pull-up required
+  pinMode(ENC_BTN_PIN, INPUT_PULLUP);  // bidirectioneel GPIO
 
   // Rotary encoder 2
   attachInterrupt(digitalPinToInterrupt(ENC2_A_PIN), encoder2ISR, CHANGE);

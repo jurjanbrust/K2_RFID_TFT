@@ -23,7 +23,7 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | EN | – | Reset | – |
 | VP | 36 | Encoder 2 A (SVP, input-only) | Rotary encoder 2 A |
 | VN | 39 | Encoder 2 B (SVN, input-only) | Rotary encoder 2 B |
-| D34 | 34 | Encoder 1 knop (input-only) | Rotary encoder 1 SW |
+| D34 | 34 | Encoder 1 A (input-only) | Rotary encoder 1 A |
 | D35 | 35 | Touch DO | XPT2046 DOUT |
 | D32 | 32 | Touch CLK | XPT2046 CLK |
 | D33 | 33 | Touch DIN | XPT2046 DIN |
@@ -46,7 +46,7 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | D5 | 5 | RFID SS | MFRC522 SDA/SS |
 | D17 | 17 | RFID RST | MFRC522 RST |
 | D16 | 16 | Encoder 2 knop | Rotary encoder 2 SW |
-| D4 | 4 | Encoder 1 A | Rotary encoder 1 A |
+| D4 | 4 | Encoder 1 knop | Rotary encoder 1 SW |
 | D2 | 2 | Encoder 1 B | Rotary encoder 1 B |
 | D15 | 15 | LCD CS (HSPI) | ST7796S CS |
 
@@ -102,12 +102,10 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 
 | Pin | ESP32 GPIO | Opmerking |
 |---|---|---|
-| A (CLK) | GPIO4 | – |
+| A (CLK) | GPIO34 | Input-only – ondersteunt wel interrupts |
 | B (DT) | GPIO2 | – |
-| SW (knop) | GPIO34 | Input-only – externe 10kΩ pull-up naar 3V3 vereist |
+| SW (knop) | GPIO4 | Interne pull-up actief |
 | GND | GND | – |
-
-> ⚠️ **GPIO34 heeft geen interne pull-up.** Sluit een externe 10kΩ weerstand aan tussen GPIO34 en 3V3, anders werkt de knop niet betrouwbaar.
 
 ### Rotary encoder 2
 

@@ -19,7 +19,7 @@
 //   SCK  GPIO18  MOSI GPIO23  MISO GPIO19  SS GPIO5  RST GPIO17
 //
 // Rotary Encoder 1 (volume / IR):
-//   A  GPIO4   B  GPIO2   BTN  GPIO34  (input-only – 10kΩ external pull-up to 3V3)
+//   A  GPIO34  (input-only)   B  GPIO2   BTN  GPIO4  (INPUT_PULLUP)
 //
 // Rotary Encoder 2:
 //   A  GPIO36/SVP   B  GPIO39/SVN   BTN  GPIO16  (INPUT_PULLUP)
