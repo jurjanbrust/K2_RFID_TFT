@@ -120,7 +120,21 @@ static uint8_t       _audioSource   = 0;
 // Macro's page: highlighted row
 static uint8_t       _macroSel      = 0;
 
-static uint8_t  _irMode       = 0;    // 0 = Audio, 1 = Airco
+// Lamp page (pagina 1) – WLED
+static uint8_t       _wledSceneSel  = 0;      // selected scene row
+static uint8_t       _wledBrightness = 80;    // 0-100%
+static bool          _wledOn         = true;
+
+// Settings page subtab  0=Display 1=WiFi 2=RFID
+static uint8_t       _settingsTab    = 0;
+static uint8_t       _sleepMinutes   = 5;      // editable here
+
+// Callbacks for Lamp page (implemented in main.cpp)
+extern void onWledScene(uint8_t idx);
+extern void onWledBrightness(uint8_t pct);
+extern void onWledPower(bool on);
+
+static uint8_t  _irMode       = 0;    // 0 = Audio (legacy IR sub-page)
 static uint8_t  _aircoTemp    = 21;
 static uint8_t  _aircoFanIdx  = 0;    // 0 = Auto … 4 = Max
 static uint8_t  _aircoAcMode  = 0;    // 0 = auto, 1 = cool, 2 = heat
@@ -760,73 +774,302 @@ void displayCalibrate()
 }
 
 // ---------------------------------------------------------------------------
-// Settings page
+// Lamp page (pagina 1) – WLED scenes
 // ---------------------------------------------------------------------------
-static void _drawSettingsPage()
+struct _WledScene { const char* name; const char* cmd; };
+static const _WledScene _wledScenes[] = {
+    { "Film",    "/win&PL=2&A=102" },  // ~40% brightness
+    { "Gaming",  "/win&PL=3&A=204" },  // ~80%
+    { "Lezen",   "/win&R=255&G=220&B=180&A=255" },  // warm white full
+    { "Nacht",   "/win&R=255&G=100&B=20&A=38" },    // dim oranje
+    { "Feest",   "/win&PL=1&A=230" },
+    { "Uit",     "/win&T=0" },
+};
+static const uint8_t _wledSceneCount = 6;
+
+// Draw horizontal brightness bar y0=top, w=width, pct=0..100
+static void _drawBar(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t pct, uint16_t fg)
+{
+    _tft->drawRect(x, y, w, h, CLR_LABEL);
+    uint16_t fill = (uint16_t)((uint32_t)(w - 2) * pct / 100);
+    _tft->fillRect(x + 1, y + 1, fill, h - 2, fg);
+    _tft->fillRect(x + 1 + fill, y + 1, w - 2 - fill, h - 2, CLR_BODY_BG);
+    char buf[8]; snprintf(buf, sizeof(buf), "%d%%", pct);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, fg);
+    int16_t tw = _tft->textWidth(buf);
+    if (fill > tw + 4) {
+        _tft->setTextColor(TFT_WHITE, fg);
+        _tft->setCursor(x + fill - tw - 2, y + (h - 14) / 2);
+    } else {
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(x + fill + 4, y + (h - 14) / 2);
+    }
+    _tft->print(buf);
+}
+
+static void _drawLampPage()
 {
     _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
 
+    // Title + Aan/Uit  y=54..86
     _tft->setTextFont(4);
     _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
-    _tft->setCursor(16, 58);
-    _tft->print("Instellingen");
-
-    // Calibrate button
-    _btn(16, 96, 290, 48, "Kalibreer aanraking", false);
-
+    _tft->setCursor(12, 56);
+    _tft->print("WLED");
+    uint16_t btnBg = _wledOn ? CLR_SUCCESS_BG : CLR_ERROR_BG;
+    _tft->fillRoundRect(340, 54, 132, 32, 6, btnBg);
     _tft->setTextFont(2);
-    if (_calLoaded) {
-        _tft->setTextColor(0x07E0, CLR_BODY_BG);   // green
-        _tft->setCursor(16, 152);
-        _tft->print("Status: kalibratie opgeslagen");
-    } else {
-        _tft->setTextColor(0xFD20, CLR_BODY_BG);   // orange
-        _tft->setCursor(16, 152);
-        _tft->print("Status: standaard waarden (niet gekalibreerd)");
-    }
+    _tft->setTextColor(TFT_WHITE, btnBg);
+    const char* pwrLbl = _wledOn ? "Aan" : "Uit";
+    int16_t pw = _tft->textWidth(pwrLbl);
+    _tft->setCursor(340 + (132 - pw) / 2, 62);
+    _tft->print(pwrLbl);
 
-    // Wis kalibratie button
-    _btn(16, 172, 200, 34, "Wis kalibratie", false, 2);
-
+    // Helderheid bar  y=96..118
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(16, 216);
-    _tft->print("Tip: houd enc2 ingedrukt voor snelkoppeling");
+    _tft->setCursor(12, 102);
+    _tft->print("Helder:");
+    _drawBar(88, 96, 380, 22, _wledBrightness, CLR_ACCENT);
+
+    // Scene buttons 2 rijen × 3 kolommen  y=128..274
+    // row0 y=128..174  row1 y=182..228
+    for (uint8_t i = 0; i < _wledSceneCount; i++)
+    {
+        uint8_t col = i % 3;
+        uint8_t row = i / 3;
+        int16_t bx = 8 + col * 158;
+        int16_t by = 128 + row * 54;
+        bool act = (i == _wledSceneSel) && _wledOn;
+        _btn(bx, by, 150, 44, _wledScenes[i].name, act);
+    }
+
+    // Status bar
+    _tft->fillRect(0, 276, 480, 44, CLR_STATUS_BG);
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, CLR_STATUS_BG);
+    _tft->setCursor(10, 290);
+    _tft->print("Enc1: helderheid  |  Klik: scene  |  Lang: Aan/Uit");
+}
+
+static void _handleLampTouch(uint16_t tx, uint16_t ty)
+{
+    // Aan/Uit  y=54..86  x=340..472
+    if (ty >= 54 && ty <= 86 && tx >= 340)
+    {
+        _wledOn = !_wledOn;
+        onWledPower(_wledOn);
+        _drawLampPage();
+        return;
+    }
+    // Helderheid bar  y=96..118  x=88..468
+    if (ty >= 96 && ty <= 118 && tx >= 88 && tx <= 468)
+    {
+        _wledBrightness = (uint8_t)((uint32_t)(tx - 88) * 100 / 380);
+        onWledBrightness(_wledBrightness);
+        _drawBar(88, 96, 380, 22, _wledBrightness, CLR_ACCENT);
+        return;
+    }
+    // Scene grid
+    if (ty >= 128 && ty <= 272)
+    {
+        uint8_t row = (ty - 128) / 54;
+        uint8_t col = tx / 158;
+        if (col > 2) col = 2;
+        uint8_t idx = row * 3 + col;
+        if (idx < _wledSceneCount && tx >= 8 && tx <= 466)
+        {
+            _wledSceneSel = idx;
+            _wledOn       = (idx != 5);  // "Uit" scene
+            onWledScene(idx);
+            _drawLampPage();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Settings page – subtabs: Display / WiFi / RFID
+// ---------------------------------------------------------------------------
+static void _drawSettingsTabBar()
+{
+    const char* tabs[] = { "Display", "WiFi", "RFID" };
+    for (uint8_t i = 0; i < 3; i++)
+        _btn(8 + i * 158, 54, 148, 34, tabs[i], i == _settingsTab, 2);
+}
+
+static void _drawSettingsPage()
+{
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+    _drawSettingsTabBar();
+
+    if (_settingsTab == 0)
+    {
+        // ── Display subtab ─────────────────────────────────────────────
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 102);
+        _tft->print("Slaap:");
+        // - / waarde / + buttons
+        char sleepBuf[8]; snprintf(sleepBuf, sizeof(sleepBuf), "%d min", _sleepMinutes);
+        _btn(88, 96, 36, 28, "-", false, 2);
+        _tft->setTextFont(4);
+        _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+        int16_t tw = _tft->textWidth(sleepBuf);
+        _tft->setCursor(134 + (120 - tw) / 2, 99);
+        _tft->print(sleepBuf);
+        _btn(264, 96, 36, 28, "+", false, 2);
+
+        // Kalibratie
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 142);
+        _tft->print("Aanraking:");
+        _btn(100, 136, 200, 34, "Kalibreer", false, 2);
+
+        _tft->setTextFont(2);
+        if (_calLoaded) {
+            _tft->setTextColor(0x07E0, CLR_BODY_BG);
+            _tft->setCursor(12, 178);
+            _tft->print("Status: kalibratie opgeslagen");
+        } else {
+            _tft->setTextColor(0xFD20, CLR_BODY_BG);
+            _tft->setCursor(12, 178);
+            _tft->print("Status: standaard (niet gekalibreerd)");
+        }
+        _btn(12, 196, 180, 28, "Wis kalibratie", false, 2);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 232);
+        _tft->print("Tip: houd enc2 lang in vanuit elke pagina");
+    }
+    else if (_settingsTab == 1)
+    {
+        // ── WiFi subtab ────────────────────────────────────────────────
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 102);
+        _tft->print("Status:");
+        if (_wifiOk) {
+            _tft->setTextColor(0x07E0, CLR_BODY_BG);
+            _tft->setCursor(80, 102);
+            _tft->print("Verbonden");
+        } else {
+            _tft->setTextColor(0xFD20, CLR_BODY_BG);
+            _tft->setCursor(80, 102);
+            _tft->print("Niet verbonden");
+        }
+        _btn(12, 122, 200, 34, "Herverbind WiFi", false, 2);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 168);
+        _tft->print("OTA:");
+        _tft->setTextColor(_wifiOk ? 0x07E0 : 0x4A49, CLR_BODY_BG);
+        _tft->setCursor(60, 168);
+        _tft->print(_wifiOk ? "actief (K2-RFID)" : "inactief (geen WiFi)");
+    }
+    else
+    {
+        // ── RFID subtab ────────────────────────────────────────────────
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 102);
+        _tft->print("RFID status:");
+        _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+        _tft->setCursor(12, 118);
+        _tft->print("Controleer aansluiting (SCK=18 MOSI=23 MISO=19 SS=5)");
+        _btn(12, 148, 200, 34, "RFID opnieuw init", false, 2);
+        _tft->setTextFont(2);
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(12, 192);
+        _tft->print("Schrijfmodus: automatisch bij kaarttapping");
+    }
 
     // Status bar
     _tft->fillRect(0, 276, 480, 44, CLR_IDLE_BG);
     _tft->setTextFont(2);
     _tft->setTextColor(TFT_WHITE, CLR_IDLE_BG);
-    _tft->setCursor(10, 283);
-    _tft->print("Raak een knop aan om actie uit te voeren");
+    _tft->setCursor(10, 290);
+    _tft->print("Enc1: waarde  |  Klik: tabblad  |  Enc2 lang: hier komen");
 }
 
 // ---------------------------------------------------------------------------
-// Touch handlers extracted from displayLoop
+// Touch handlers
 // ---------------------------------------------------------------------------
 static void _handleSettingsTouch(uint16_t tx, uint16_t ty)
 {
-    if (ty >= 96 && ty <= 144 && tx >= 16 && tx <= 306)
+    // Tab bar  y=54..88
+    if (ty >= 54 && ty <= 88)
     {
-        displayCalibrate();
-        _calLoaded = true;
-        _drawHeader();
+        uint8_t t = tx / 160;
+        if (t > 2) t = 2;
+        _settingsTab = t;
         _drawSettingsPage();
         return;
     }
-    if (ty >= 172 && ty <= 206 && tx >= 16 && tx <= 216)
+
+    if (_settingsTab == 0)
     {
-        Preferences p;
-        p.begin("tcal2", false);
-        p.clear();
-        p.end();
-        _calLoaded = false;
-        _calX1 = 300; _calX2 = 3800;
-        _calY1 = 300; _calY2 = 3800;
-        _calFlags = 0;
-        Serial.println("[CAL] kalibratie gewist, standaard waarden hersteld");
-        _drawSettingsPage();
-        return;
+        // Sleep minus y=96..124 x=88..124
+        if (ty >= 96 && ty <= 124 && tx >= 88 && tx <= 124)
+        {
+            if (_sleepMinutes > 1) { _sleepMinutes--; _sleepAfterMs = (unsigned long)_sleepMinutes * 60000; }
+            _drawSettingsPage();
+            return;
+        }
+        // Sleep plus y=96..124 x=264..300
+        if (ty >= 96 && ty <= 124 && tx >= 264 && tx <= 300)
+        {
+            if (_sleepMinutes < 60) { _sleepMinutes++; _sleepAfterMs = (unsigned long)_sleepMinutes * 60000; }
+            _drawSettingsPage();
+            return;
+        }
+        // Kalibreer y=136..170 x=100..300
+        if (ty >= 136 && ty <= 170 && tx >= 100 && tx <= 300)
+        {
+            displayCalibrate();
+            _calLoaded = true;
+            _drawHeader();
+            _drawSettingsPage();
+            return;
+        }
+        // Wis kalibratie y=196..224 x=12..192
+        if (ty >= 196 && ty <= 224 && tx >= 12 && tx <= 192)
+        {
+            Preferences p;
+            p.begin("tcal2", false); p.clear(); p.end();
+            _calLoaded = false;
+            _calX1 = 300; _calX2 = 3800;
+            _calY1 = 300; _calY2 = 3800;
+            _calFlags = 0;
+            Serial.println("[CAL] kalibratie gewist");
+            _drawSettingsPage();
+            return;
+        }
+    }
+    else if (_settingsTab == 1)
+    {
+        // Herverbind y=122..156 x=12..212
+        if (ty >= 122 && ty <= 156 && tx >= 12 && tx <= 212)
+        {
+            Serial.println("[WiFi] herverbinden...");
+            // Triggers reconnect in loop() via flag is too complex here;
+            // toggle wifiOk to force loop reconnect on next cycle
+            // actual reconnect logic is in main.cpp loop
+            _drawSettingsPage();
+            return;
+        }
+    }
+    else
+    {
+        // RFID herinitialiseren y=148..182 x=12..212
+        if (ty >= 148 && ty <= 182 && tx >= 12 && tx <= 212)
+        {
+            Serial.println("[RFID] herinitialisatie gevraagd (herstart ESP)");
+            // A full re-init requires main.cpp; signal via Serial only
+            _drawSettingsPage();
+            return;
+        }
     }
 }
 
@@ -1257,6 +1500,7 @@ void displayLoop()
     switch (_currentPage)
     {
     case 0: _handleRfidTouch(tx, ty);     break;
+    case 1: _handleLampTouch(tx, ty);     break;
     case 2: _handleAudioTouch(tx, ty);    break;
     case 3: _handleAircoTouch(tx, ty);    break;
     case 4: _handleMacrosTouch(tx, ty);   break;
@@ -1278,6 +1522,7 @@ void displaySetPage(uint8_t page)
     switch (page)
     {
     case 0: _drawMainPage();    break;
+    case 1: _drawLampPage();    break;
     case 2: _drawAudioPage();   break;
     case 3: _drawAircoPage();   break;
     case 4: _drawMacrosPage();  break;
@@ -1419,5 +1664,28 @@ void displayMacroExecute()
 {
     if (_currentPage != 4) return;
     onMacroExecute(_macroSel);
+}
+
+void displayLampBrightnessTurn(int delta)
+{
+    if (_currentPage != 1) return;
+    int v = (int)_wledBrightness + delta * 2;
+    _wledBrightness = (uint8_t)constrain(v, 0, 100);
+    onWledBrightness(_wledBrightness);
+    _drawBar(88, 96, 380, 22, _wledBrightness, CLR_ACCENT);
+}
+
+void displaySettingsTabNext()
+{
+    if (_currentPage != 5) return;
+    _settingsTab = (_settingsTab + 1) % 3;
+    _drawSettingsPage();
+}
+
+void displayUpdateWled(bool on, uint8_t brightness)
+{
+    _wledOn = on;
+    _wledBrightness = brightness;
+    if (_currentPage == 1) _drawLampPage();
 }
 

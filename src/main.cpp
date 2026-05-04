@@ -106,6 +106,9 @@ extern void displayRfidFieldNext();
 extern void displayMacroSelect(int delta);
 extern void displayMacroExecute();
 extern void displayShowOtaProgress(uint8_t pct);
+extern void displayLampBrightnessTurn(int delta);
+extern void displaySettingsTabNext();
+extern void displayUpdateWled(bool on, uint8_t brightness);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -126,6 +129,38 @@ static void _wledGet(const String& cmd)
         client.responseStatusCode();
         client.stop();
     }
+}
+
+static void _wledSet(uint8_t pct)
+{
+    uint8_t a = (uint8_t)((uint32_t)pct * 255 / 100);
+    _wledGet("/win&T=1&A=" + String(a));
+}
+
+void onWledScene(uint8_t idx)
+{
+    static const char* const cmds[] = {
+        "/win&PL=2&A=102",
+        "/win&PL=3&A=204",
+        "/win&R=255&G=220&B=180&A=255",
+        "/win&R=255&G=100&B=20&A=38",
+        "/win&PL=1&A=230",
+        "/win&T=0",
+    };
+    if (idx < 6) _wledGet(cmds[idx]);
+    Serial.printf("[WLED] scene %d\n", idx);
+}
+
+void onWledBrightness(uint8_t pct)
+{
+    _wledSet(pct);
+    Serial.printf("[WLED] brightness %d%%\n", pct);
+}
+
+void onWledPower(bool on)
+{
+    _wledGet(on ? "/win&T=1" : "/win&T=0");
+    Serial.printf("[WLED] power %s\n", on ? "aan" : "uit");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,12 +282,22 @@ void enc1ButtonClick()
     case 0:  // RFID: veld wisselen
         displayRfidFieldNext();
         break;
+    case 1:  // Lamp: volgende scene
+    {
+        static uint8_t lampSceneIdx = 0;
+        lampSceneIdx = (lampSceneIdx + 1) % 6;
+        onWledScene(lampSceneIdx);
+        break;
+    }
     case 2:  // Audio: play/pauze
         irsend.sendNEC(IR_PLAYPAUZE);
         displaySetLastAction("Play / Pauze");
         break;
     case 3:  // Airco: ventilator omhoog
         onIrFanChange((acFanIdx + 1) % kFanCount);
+        break;
+    case 5:  // Settings: volgend tabblad
+        displaySettingsTabNext();
         break;
     default:
         break;
@@ -491,6 +536,9 @@ void loop()
       {
       case 0:  // RFID veld navigatie
           displayRfidFieldTurn(delta);
+          break;
+      case 1:  // Lamp helderheid
+          displayLampBrightnessTurn(delta);
           break;
       case 2:  // Audio volume
       {
