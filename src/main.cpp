@@ -30,11 +30,11 @@ bool encrypted = false;
 // ---------------------------------------------------------------------------
 #define IR_SEND_PIN   22   // IR LED (38 kHz carrier via PWM)
 #define ENC_A_PIN     34   // Encoder 1 channel A (input-only, supports interrupts)
-#define ENC_B_PIN      2   // Encoder 1 channel B
-#define ENC_BTN_PIN    4   // Encoder 1 button (INPUT_PULLUP)
+#define ENC_B_PIN     32   // Encoder 1 channel B
+#define ENC_BTN_PIN   21   // Encoder 1 button (INPUT_PULLUP)
 #define ENC2_A_PIN    36   // Encoder 2 channel A (SVP, input-only)
 #define ENC2_B_PIN    39   // Encoder 2 channel B (SVN, input-only)
-#define ENC2_BTN_PIN  16   // Encoder 2 button (supports INPUT_PULLUP)
+#define ENC2_BTN_PIN  35   // Encoder 2 button (input-only, requires external 10kΩ pull-up to 3.3V)
 
 // NEC codes – audio/HiFi receiver
 #define IR_ONOFF      0x8E7629DUL
@@ -448,6 +448,7 @@ void setup()
 
   Serial.println("[K2] MFRC522 init...");
   mfrc522.PCD_Init();
+  mfrc522.PCD_SetAntennaGain(MFRC522::RxGain_max);  // boost receiver gain for reliable auth
   // Print firmware version to confirm communication
   byte v = mfrc522.PCD_ReadRegister(MFRC522::VersionReg);
   Serial.printf("[K2] MFRC522 version: 0x%02X %s\n", v,
@@ -465,7 +466,7 @@ void setup()
   // Rotary encoder 2
   attachInterrupt(digitalPinToInterrupt(ENC2_A_PIN), encoder2ISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC2_B_PIN), encoder2ISR, CHANGE);
-  pinMode(ENC2_BTN_PIN, INPUT_PULLUP);
+  pinMode(ENC2_BTN_PIN, INPUT);  // GPIO35 is input-only, no internal pull-up – requires external 10kΩ to 3.3V
 
   // Encoder button callbacks
   enc1Btn.attachClick(enc1ButtonClick);

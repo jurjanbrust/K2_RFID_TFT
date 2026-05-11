@@ -8,12 +8,12 @@
 // Hardware layout  –  Regular ESP32 DevKit
 //
 // Display  (ST7796S, HSPI, 320x480 native, landscape = 480x320):
-//   LCD_MOSI GPIO13  LCD_CLK  GPIO14  LCD_MISO GPIO12
-//   LCD_CS   GPIO15  LCD_DC   GPIO27  LCD_RST  GPIO26
-//   LCD_BL   GPIO25  (HIGH = on)
+//   LCD_MOSI GPIO27  LCD_CLK  GPIO14  LCD_MISO GPIO13
+//   LCD_CS   GPIO33  LCD_DC   GPIO26  LCD_RST  GPIO25
+//   LCD_BL   GPIO12  (HIGH = on)
 //
 // Touch  (XPT2046, bit-bang SPI):
-//   T_CLK  GPIO32   T_DIN  GPIO33   T_DO  GPIO35   T_CS  GPIO21
+//   T_CLK  GPIO16   T_DIN  GPIO2    T_DO  GPIO15   T_CS  GPIO4
 //   T_IRQ  not connected
 //
 // MFRC522 RFID (VSPI):
@@ -32,10 +32,10 @@
 // ---------------------------------------------------------------------------
 // Touch pin definitions (bit-bang SPI)
 // ---------------------------------------------------------------------------
-#define _T_CLK  32
-#define _T_CS   21
-#define _T_DIN  33
-#define _T_DO   35
+#define _T_CLK  16
+#define _T_CS    4
+#define _T_DIN   2
+#define _T_DO   15
 
 #define _T_Z_THRESH   200   // Z pressure threshold (0-4095)
 #define _T_SAMPLES      8   // averaging samples per reading
