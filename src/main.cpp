@@ -31,10 +31,7 @@ bool encrypted = false;
 #define IR_SEND_PIN   22   // IR LED (38 kHz carrier via PWM)
 #define ENC_A_PIN     34   // Encoder 1 channel A (input-only, supports interrupts)
 #define ENC_B_PIN     32   // Encoder 1 channel B
-#define ENC_BTN_PIN   21   // Encoder 1 button (INPUT_PULLUP)
-#define ENC2_A_PIN    36   // Encoder 2 channel A (SVP, input-only)
-#define ENC2_B_PIN    39   // Encoder 2 channel B (SVN, input-only)
-#define ENC2_BTN_PIN  35   // Encoder 2 button (input-only, requires external 10kΩ pull-up to 3.3V)
+#define ENC_BTN_PIN   35   // Encoder button (input-only – externe 10kΩ pull-up naar 3.3V vereist)
 
 // NEC codes – audio/HiFi receiver
 #define IR_ONOFF      0x8E7629DUL
@@ -51,16 +48,12 @@ IRsend  irsend(IR_SEND_PIN);
 IRMitsubishiHeavy152Ac ac(IR_SEND_PIN);
 
 RotaryEncoder encoder(ENC_A_PIN, ENC_B_PIN, RotaryEncoder::LatchMode::TWO03);
-RotaryEncoder encoder2(ENC2_A_PIN, ENC2_B_PIN, RotaryEncoder::LatchMode::TWO03);
-IRAM_ATTR void encoderISR()  { encoder.tick(); }
-IRAM_ATTR void encoder2ISR() { encoder2.tick(); }
+IRAM_ATTR void encoderISR() { encoder.tick(); }
 
-OneButton enc1Btn(ENC_BTN_PIN,  true);  // left encoder button (active low)
-OneButton enc2Btn(ENC2_BTN_PIN, true);  // right encoder button (active low)
+OneButton enc1Btn(ENC_BTN_PIN, true);  // encoder button (active low)
 
 static bool          toggleBluetooth  = false;
 static uint8_t       ledToggleIndex   = 0;
-static int           lastEnc2Pos      = 0;
 static unsigned long _rfidBusyUntil   = 0;
 #ifdef DEBUG
 static unsigned long _lastRfidDbg = 0;
@@ -273,7 +266,6 @@ void onIrAudio(uint8_t action)
 
 // ---------------------------------------------------------------------------
 // Encoder button handlers – ported from IRremote project
-// enc1Btn = left (was BLAUW_BTN),  enc2Btn = right (was GROEN_BTN)
 // ---------------------------------------------------------------------------
 void enc1ButtonClick()
 {
@@ -337,58 +329,6 @@ void enc1ButtonLongPress()
     }
 }
 
-void enc2ButtonClick()
-{
-    switch (displayGetPage())
-    {
-    case 0:  // RFID: veld wisselen
-        displayRfidFieldNext();
-        break;
-    case 2:  // Audio: bron wisselen
-    {
-        static const uint8_t kSrcActions[] = { IR_AUDIO_LINE1, IR_AUDIO_LINE2, IR_AUDIO_BLUETOOTH };
-        static uint8_t srcIdx = 0;
-        srcIdx = (srcIdx + 1) % 3;
-        onIrAudio(kSrcActions[srcIdx]);
-        break;
-    }
-    case 3:  // Airco: modus cyclus
-        onIrAcMode((acAcMode + 1) % 3);
-        break;
-    case 4:  // Macro's: geselecteerde uitvoeren
-        displayMacroExecute();
-        break;
-    default:
-        break;
-    }
-}
-
-void enc2ButtonDoubleClick()
-{
-    if (displayGetPage() != 2) return;
-    static const uint8_t     kR[] = {  0,   0, 128, 255 };
-    static const uint8_t     kG[] = {  0, 255,   0,   0 };
-    static const uint8_t     kB[] = {255,   0, 128,   0 };
-    static const char* const kN[] = { "Blauw", "Groen", "Paars", "Rood" };
-    ledToggleIndex = (ledToggleIndex + 1) % 4;
-    _wledGet(String("/win&R=") + kR[ledToggleIndex]
-             + "&G=" + kG[ledToggleIndex]
-             + "&B=" + kB[ledToggleIndex]);
-    displaySetLastAction(kN[ledToggleIndex]);
-}
-
-void enc2ButtonLongPress()
-{
-    if (displayGetPage() == 2)
-    {
-        _wledGet("/win&A=38");  // ~15% helderheid
-        displaySetLastAction("LED dimmen 15%");
-    }
-    else
-    {
-        displaySetPage(5);  // Instellingen
-    }
-}
 
 void onMacroExecute(uint8_t idx)
 {
@@ -438,7 +378,7 @@ void setup()
 
   // Start dedicated SPI bus for MFRC522 (VSPI: SCK=18, MISO=19, MOSI=23)
   // TFT_eSPI uses HSPI internally – no manual SPI.begin() needed for display
-  rfidSPI.begin(18, 19, 23, -1);
+  rfidSPI.begin(18, 19, 21, -1);
   Serial.println("[K2] RFID SPI OK");
 
   // Initialise display (TFT_eSPI manages its own HSPI bus via USE_HSPI_PORT)
@@ -461,21 +401,12 @@ void setup()
   // Rotary encoder 1 (interrupt-driven)
   attachInterrupt(digitalPinToInterrupt(ENC_A_PIN), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC_B_PIN), encoderISR, CHANGE);
-  pinMode(ENC_BTN_PIN, INPUT_PULLUP);  // bidirectioneel GPIO
-
-  // Rotary encoder 2
-  attachInterrupt(digitalPinToInterrupt(ENC2_A_PIN), encoder2ISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ENC2_B_PIN), encoder2ISR, CHANGE);
-  pinMode(ENC2_BTN_PIN, INPUT);  // GPIO35 is input-only, no internal pull-up – requires external 10kΩ to 3.3V
+  pinMode(ENC_BTN_PIN, INPUT);  // GPIO35 is input-only, geen interne pull-up – externe 10kΩ naar 3.3V vereist
 
   // Encoder button callbacks
   enc1Btn.attachClick(enc1ButtonClick);
   enc1Btn.attachDoubleClick(enc1ButtonDoubleClick);
   enc1Btn.attachLongPressStart(enc1ButtonLongPress);
-  enc2Btn.attachClick(enc2ButtonClick);
-  enc2Btn.attachDoubleClick(enc2ButtonDoubleClick);
-  enc2Btn.attachLongPressStart(enc2ButtonLongPress);
-
   // Airco: defaults
   ac.setFan(kFanSpeeds[0]);
   ac.set3D(true);
@@ -523,7 +454,6 @@ void loop()
 {
   displayLoop();
   enc1Btn.tick();
-  enc2Btn.tick();
 
   // Rotary encoder 1 – RFID veld (pagina 0), volume (pagina 2) of temperatuur (pagina 3)
   {
@@ -558,19 +488,6 @@ void loop()
       default:
           break;
       }
-    }
-  }
-
-  // Rotary encoder 2 – paginanavigatie (alle pagina's)
-  {
-    int newEnc2Pos = encoder2.getPosition();
-    if (newEnc2Pos != lastEnc2Pos)
-    {
-      int delta = newEnc2Pos - lastEnc2Pos;
-      lastEnc2Pos = newEnc2Pos;
-      displayWakeup();
-      if (delta > 0) displayNextPage();
-      else           displayPrevPage();
     }
   }
 

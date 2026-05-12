@@ -9,8 +9,7 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 - **MFRC522** RFID-module (13,56 MHz, SPI)
 - **XPT2046** touchscreen controller (bit-bang SPI)
 - **IR LED** (38 kHz zender)
-- **Rotary encoder 1** (EC11) – volume / temperatuur
-- **Rotary encoder 2** (EC11) – tweede bediening
+- **Rotary encoder** (EC11) – volume / temperatuur / bediening
 
 ---
 
@@ -21,11 +20,11 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | LEFT | GPIO | Functie | Aangesloten hardware |
 |---|---|---|---|
 | EN | – | Reset | – |
-| VP | 36 | Encoder 2 A (SVP, input-only) | Rotary encoder 2 A |
-| VN | 39 | Encoder 2 B (SVN, input-only) | Rotary encoder 2 B |
-| D34 | 34 | Encoder 1 A (input-only) | Rotary encoder 1 A |
-| D35 | 35 | Encoder 1 knop | Rotary encoder 1 SW |
-| D32 | 32 | Encoder 1 B | Rotary encoder 1 B |
+| VP | 36 | – | Vrij |
+| VN | 39 | – | Vrij |
+| D34 | 34 | Encoder A (input-only) | Rotary encoder A |
+| D35 | 35 | Encoder knop | Rotary encoder SW |
+| D32 | 32 | Encoder B | Rotary encoder B |
 | D33 | 33 | LCD CS | ST7796S CS |
 | D25 | 25 | LCD RESET | ST7796S RST |
 | D26 | 26 | LCD DC | ST7796S DC |
@@ -36,11 +35,11 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 
 | RIGHT | GPIO | Functie | Aangesloten hardware |
 |---|---|---|---|
-| D23 | 23 | RFID MOSI (VSPI) | MFRC522 MOSI |
+| D23 | 23 | – | Vrij |
 | D22 | 22 | IR LED uitgang | IR LED 38 kHz |
 | TX0 | 1 | UART TX | Serial debug |
 | RX0 | 3 | UART RX | Serial debug |
-| D21 | 21 | Encoder 2 knop | Rotary encoder 2 SW |
+| D21 | 21 | RFID MOSI (VSPI) | MFRC522 MOSI |
 | D19 | 19 | RFID MISO (VSPI) | MFRC522 MISO |
 | D18 | 18 | RFID SCK (VSPI) | MFRC522 SCK |
 | D5 | 5 | RFID SS | MFRC522 SDA/SS |
@@ -50,7 +49,7 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | D2 | 2 | Touch DIN | XPT2046 DIN |
 | D15 | 15 | Touch DO | XPT2046 DOUT |
 
-**Vrij:** geen — alle GPIO's zijn in gebruik.
+**Vrij:** GPIO36 (VP), GPIO39 (VN), GPIO23 (D23)
 
 ---
 
@@ -73,7 +72,7 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | MFRC522 pin | ESP32 GPIO |
 |---|---|
 | SCK | GPIO18 |
-| MOSI | GPIO23 |
+| MOSI | GPIO21 |
 | MISO | GPIO19 |
 | SDA/SS | GPIO5 |
 | RST | GPIO17 |
@@ -98,23 +97,19 @@ ESP32 gebaseerde RFID-schrijver voor Creality K2 filamentspoel-tags, met TFT-dis
 | Anode (via 33Ω weerstand) | GPIO22 |
 | Kathode | GND |
 
-### Rotary encoder 1
+### Rotary encoder
+
+EC11-type, geen VCC-pin. Fysieke pinvolgorde draaikant (links→rechts): **CLK – GND – DT**. Knopmast: **SW – GND**.
+
+> **Let op:** GPIO34 (CLK) is input-only en ondersteunt geen interne pull-up. Voeg een externe **10 kΩ weerstand** toe van GPIO34 naar 3.3V om zwevende pin ruis te voorkomen.
 
 | Pin | ESP32 GPIO | Opmerking |
 |---|---|---|
-| A (CLK) | GPIO34 | Input-only – ondersteunt wel interrupts |
-| B (DT) | GPIO32 | – |
-| SW (knop) | GPIO21 | Interne pull-up actief |
-| GND | GND | – |
-
-### Rotary encoder 2
-
-| Pin | ESP32 GPIO | Opmerking |
-|---|---|---|
-| A (CLK) | GPIO36 (SVP) | Input-only |
-| B (DT) | GPIO39 (SVN) | Input-only |
-| SW (knop) | GPIO35 | Externe pull-up vereist (input-only) |
-| GND | GND | – |
+| A (CLK) | GPIO34 | Input-only – externe 10 kΩ pull-up naar 3.3V vereist |
+| GND | GND | Middelste pin van de 3-pinsrij |
+| B (DT) | GPIO32 | Interne pull-up actief |
+| SW (knop) | GPIO35 | Input-only – externe 10 kΩ pull-up naar 3.3V vereist |
+| GND (knop) | GND | – |
 
 ---
 
@@ -144,11 +139,12 @@ Het scherm heeft twee tabs:
 - **K2 RFID** (links): filament merktype kleur kiezen en naar RFID-tag schrijven
 - **IR Control** (rechts): audioapparaat of Mitsubishi Heavy airco bedienen via IR
 
-Encoder 1 werkt contextgevoelig:
-- In **Audio** modus: volume omhoog/omlaag
-- In **Airco** modus: temperatuur instellen
-
-Encoder 2 is aangesloten maar nog niet aan een functie toegewezen in de software.
+De encoder werkt contextgevoelig:
+- In **RFID** modus: actief veld wisselen (klik), door velden navigeren (draaien)
+- In **Lamp** modus: helderheid aanpassen (draaien), scene wisselen (klik)
+- In **Audio** modus: volume omhoog/omlaag (draaien), play/pauze (klik), bron wisselen (dubbelklik), aan/uit (lang indrukken)
+- In **Airco** modus: temperatuur instellen (draaien), ventilator omhoog (klik), power toggle (lang indrukken)
+- In **Macro's** modus: selecteren (draaien)
 
 ---
 
