@@ -231,6 +231,13 @@ void displaySetWifi(bool ok)
     if (_currentPage == 5) _drawSettingsPage();
 }
 
+void displaySetPortalActive(bool active, const char* ssid)
+{
+    _portalActive = active;
+    if (ssid && ssid[0]) strncpy(_wifiSsid, ssid, sizeof(_wifiSsid) - 1);
+    if (_currentPage == 5) _drawSettingsPage();
+}
+
 void displaySetLastAction(const char* action)
 {
     strncpy(_lastIrAction, action, sizeof(_lastIrAction) - 1);

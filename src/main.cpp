@@ -14,6 +14,7 @@
 #include <RotaryEncoder.h>
 #include "includes.h"
 #include "HueControl.h"
+#include "WifiPortal.h"
 
 #define SS_PIN  5
 #define RST_PIN 17
@@ -84,6 +85,44 @@ void loadConfig();
 void onMacroExecute(uint8_t idx);
 void enc1ButtonClick();
 void enc1ButtonLongPress();
+
+// ---------------------------------------------------------------------------
+// WiFi portal callbacks – triggered by Settings touch handler
+// ---------------------------------------------------------------------------
+void onWifiPortalStart()
+{
+    wifiPortalStart();
+    displaySetPortalActive(true);
+    displaySetWifi(false);
+}
+
+void onWifiPortalStop()
+{
+    wifiPortalStop();
+    displaySetPortalActive(false);
+}
+
+void onWifiReconnect()
+{
+    if (wifiPortalActive()) return;
+    WiFi.reconnect();
+    unsigned long tw = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - tw < 5000) delay(100);
+    wifiOk = (WiFi.status() == WL_CONNECTED);
+    if (wifiOk)
+    {
+        displaySetWifi(true);
+        displaySetPortalActive(false, WiFi.SSID().c_str());
+        configTime(3600, 3600, "pool.ntp.org");
+        ArduinoOTA.begin();
+        Serial.println("[WiFi] herverbonden");
+    }
+    else
+    {
+        displaySetWifi(false);
+        Serial.println("[WiFi] herverbinden mislukt");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -370,6 +409,7 @@ void setup()
                                   : "[WiFi] niet verbonden");
             if (wifiOk)
             {
+                displaySetPortalActive(false, WiFi.SSID().c_str());
                 configTime(3600, 3600, "pool.ntp.org");
                 ArduinoOTA.setHostname("K2-RFID");
                 ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -379,7 +419,12 @@ void setup()
                 Serial.println("[OTA] ready");
             }
         }
-        else { Serial.println("[WiFi] geen credentials, offline modus"); }
+        else
+        {
+            Serial.println("[WiFi] geen credentials – portal starten");
+            wifiPortalStart();
+            displaySetPortalActive(true);
+        }
     }
     displaySetWifi(wifiOk);
 
@@ -397,6 +442,13 @@ static unsigned long _lastRfidDbg = 0;
 void loop()
 {
     displayLoop();
+
+    // WiFi portal – verwerkt DNS + HTTP als de portal actief is
+    if (wifiPortalActive())
+    {
+        wifiPortalLoop();
+        return;   // skip RFID en encoder tijdens portal
+    }
 
     // ── Encoder button state machine (hold+turn = paginanavigatie) ────────
     {
@@ -475,10 +527,10 @@ void loop()
     // Block RFID processing during post-write cooldown
     if (millis() < _rfidBusyUntil) return;
 
-    // WiFi reconnect elke 30 s
+    // WiFi reconnect elke 30 s (alleen als geen portal actief)
     {
         static unsigned long _lastWifiRetry = 0;
-        if (!wifiOk && millis() - _lastWifiRetry > 30000)
+        if (!wifiOk && !wifiPortalActive() && millis() - _lastWifiRetry > 30000)
         {
             _lastWifiRetry = millis();
             WiFi.reconnect();
@@ -488,6 +540,7 @@ void loop()
             if (wifiOk)
             {
                 displaySetWifi(true);
+                displaySetPortalActive(false, WiFi.SSID().c_str());
                 configTime(3600, 3600, "pool.ntp.org");
                 ArduinoOTA.begin();
                 Serial.println("[WiFi] herverbonden");

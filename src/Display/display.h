@@ -70,6 +70,7 @@ void displaySetIrMode(uint8_t mode);
 void displayUpdateAirco(uint8_t temp, uint8_t fanIdx, uint8_t acMode, bool power);
 void displaySetWifi(bool ok);
 void displaySetLastAction(const char* action);
+void displaySetPortalActive(bool active, const char* ssid = "");
 void displaySetHueConfig(const char* ip, bool hasToken);
 void displayToast(const char* msg);
 void displayShowOtaProgress(uint8_t pct);

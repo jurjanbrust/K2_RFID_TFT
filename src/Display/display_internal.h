@@ -124,6 +124,8 @@ extern const uint8_t  _hueRoomCount;
 // Settings page
 extern uint8_t  _settingsTab;     // 0=Display 1=WiFi 2=RFID 3=Hue
 extern uint8_t  _sleepMinutes;
+extern bool     _portalActive;    // true als WiFi captive portal draait
+extern char     _wifiSsid[33];    // huidig verbonden SSID (of leeg)
 
 // Airco / IR state
 extern uint8_t  _irMode;
@@ -150,6 +152,11 @@ extern void onHuePower(uint8_t roomIdx, bool on);
 extern void onHueBrightness(uint8_t roomIdx, uint8_t pct);
 extern void onHuePair();
 extern void onHueDeleteToken();
+
+// WiFi portal callbacks (implemented in main.cpp)
+extern void onWifiPortalStart();
+extern void onWifiPortalStop();
+extern void onWifiReconnect();
 
 extern void onIrTempDelta(int delta);
 extern void onIrFanChange(uint8_t idx);

@@ -136,6 +136,8 @@ const uint8_t _hueRoomCount = 4;
 // Settings page
 uint8_t _settingsTab  = 0;
 uint8_t _sleepMinutes = 5;
+bool    _portalActive = false;
+char    _wifiSsid[33] = "";
 
 // Airco / IR state
 uint8_t  _irMode      = 0;

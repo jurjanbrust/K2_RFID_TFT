@@ -52,28 +52,59 @@ static void _drawSettingsDisplay()
 // ---------------------------------------------------------------------------
 static void _drawSettingsWifi()
 {
+    // Status
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(12, 102);
+    _tft->setCursor(12, 97);
     _tft->print("Status:");
-    if (_wifiOk) {
+    if (_portalActive) {
+        _tft->setTextColor(0xFDE0, CLR_BODY_BG);  // oranje
+        _tft->setCursor(80, 97);
+        _tft->print("Portal actief – K2-RFID-Setup");
+        _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+        _tft->setCursor(80, 113);
+        _tft->print("Verbind met AP en open 192.168.4.1");
+        _btn(12, 132, 180, 30, "Portal stoppen", false, 2);
+    } else if (_wifiOk) {
         _tft->setTextColor(0x07E0, CLR_BODY_BG);
-        _tft->setCursor(80, 102);
+        _tft->setCursor(80, 97);
         _tft->print("Verbonden");
+        if (_wifiSsid[0]) {
+            _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+            _tft->setCursor(12, 113);
+            _tft->print("SSID:");
+            _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
+            _tft->setCursor(60, 113);
+            _tft->print(_wifiSsid);
+        }
+        _btn(12,  132, 180, 30, "Herverbind", false, 2);
+        _btn(200, 132, 180, 30, "WiFi portal", false, 2);
     } else {
         _tft->setTextColor(0xFD20, CLR_BODY_BG);
-        _tft->setCursor(80, 102);
+        _tft->setCursor(80, 97);
         _tft->print("Niet verbonden");
+        _btn(12,  132, 180, 30, "Herverbind", false, 2);
+        _btn(200, 132, 180, 30, "WiFi portal", false, 2);
     }
-    _btn(12, 122, 200, 32, "Herverbind WiFi", false, 2);
 
+    // OTA status
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
-    _tft->setCursor(12, 166);
+    _tft->setCursor(12, 176);
     _tft->print("OTA:");
     _tft->setTextColor(_wifiOk ? 0x07E0 : 0x4A49, CLR_BODY_BG);
-    _tft->setCursor(60, 166);
-    _tft->print(_wifiOk ? "actief (K2-RFID)" : "inactief (geen WiFi)");
+    _tft->setCursor(60, 176);
+    _tft->print(_wifiOk ? "actief (K2-RFID)" : "inactief");
+
+    // Portal uitleg
+    if (!_portalActive && !_wifiOk) {
+        _tft->setTextFont(2);
+        _tft->setTextColor(0x4A49, CLR_BODY_BG);
+        _tft->setCursor(12, 200);
+        _tft->print("Druk 'WiFi portal' om SSID + wachtwoord in");
+        _tft->setCursor(12, 216);
+        _tft->print("te stellen via je telefoon of laptop.");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,12 +242,23 @@ void _handleSettingsTouch(uint16_t tx, uint16_t ty)
         break;
 
     case 1:  // WiFi
-        // Herverbind  y=122..154  x=12..212
-        if (ty >= 122 && ty <= 154 && tx >= 12 && tx <= 212)
+        if (_portalActive)
         {
-            Serial.println("[WiFi] herverbind gevraagd via settings");
-            // main.cpp handles actual reconnect; signal via Serial
-            _drawSettingsPage();
+            // "Portal stoppen"  y=132..162  x=12..192
+            if (ty >= 132 && ty <= 162 && tx >= 12 && tx <= 192)
+                onWifiPortalStop();
+        }
+        else
+        {
+            // "Herverbind"  y=132..162  x=12..192
+            if (ty >= 132 && ty <= 162 && tx >= 12 && tx <= 192)
+            {
+                Serial.println("[WiFi] herverbind gevraagd via settings");
+                onWifiReconnect();
+            }
+            // "WiFi portal"  y=132..162  x=200..380
+            else if (ty >= 132 && ty <= 162 && tx >= 200 && tx <= 380)
+                onWifiPortalStart();
         }
         break;
 

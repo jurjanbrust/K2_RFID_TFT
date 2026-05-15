@@ -262,28 +262,41 @@ struct Macro {
 Systeem- en netwerkconfiguratie zonder seriële terminal.
 
 ```
-  [ WiFi ]  [ Hue ]  [ Display ]  [ RFID ]
+  [ Display ]  [ WiFi ]  [ RFID ]  [ Hue ]
   ───────────────────────────────────────────────────
 
-  — WiFi subtab —
-  SSID:      MijnNetwerk             [ Wijzigen ]
-  Status:    ● Verbonden  192.168.10.45
-  OTA:       ● Actief
-  [ Opnieuw verbinden ]
+  — WiFi subtab (verbonden) —
+  Status:    ● Verbonden
+  SSID:      MijnNetwerk
+  [ Herverbind ]   [ WiFi portal ]
+  OTA:       ● actief (K2-RFID)
+
+  — WiFi subtab (portal actief) —
+  Status:    ● Portal actief – K2-RFID-Setup
+             Verbind met AP en open 192.168.4.1
+  [ Portal stoppen ]
+  OTA:       ○ inactief
+
+  — WiFi subtab (niet verbonden) —
+  Status:    ○ Niet verbonden
+  [ Herverbind ]   [ WiFi portal ]
+  OTA:       ○ inactief
+  Druk 'WiFi portal' om SSID + wachtwoord in te stellen
+  via je telefoon of laptop.
 
   — Hue subtab —
-  Bridge IP: 192.168.10.x            [ Wijzigen ]
+  Bridge IP: 192.168.10.x
   Token:     Ingesteld               [ Verwijderen ]
   [ Koppelen (druk Bridge-knop) ]
 
   — Display subtab —
-  Helderheid:    ████████░░  80%
   Slaapstand:    5 min              [ - ]  [ + ]
-  Kalibratie:    [ Herstart wizard ]
+  Kalibratie:    [ Kalibreer ]  [ Wis kalibratie ]
 
   — RFID subtab —
-  Schrijfmodus:  [ Auto ]  [ Handmatig ]
-  Geschiedenis:  [ Wissen ]
+  Schrijfmodus:  handmatig (enc lang op RFID-pagina)
+  Schrijfhistorie:  N / 5 opgeslagen
+  [ RFID opnieuw init ]  [ Historie wissen ]
 ```
 
 | Bediening | Actie |
@@ -293,8 +306,39 @@ Systeem- en netwerkconfiguratie zonder seriële terminal.
 | Knop + draaien | Paginanavigatie |
 | Touch | Directe bediening alle instellingen |
 
-#### Tekst invoer
-WiFi SSID/wachtwoord en Bridge IP via alfabet-scrolllijst (enc draaien = letter, enc klik = volgende positie, enc lang = bevestigen). Toont huidige invoer als `MijnN_` met cursor.
+#### WiFi captive portal
+
+**Wanneer actief:**
+- Bij eerste opstart zonder opgeslagen credentials
+- Via knop "WiFi portal" op de Settings → WiFi-tab
+
+**Werking:**
+1. ESP32 start als access point `K2-RFID-Setup` (geen wachtwoord)
+2. Alle DNS-verzoeken worden omgeleid naar `192.168.4.1` (captive portal)
+3. Verbind met het AP via telefoon of laptop → browser opent automatisch
+4. Vul SSID + wachtwoord in → `POST /save` → opgeslagen in NVS → ESP herstart
+5. Bij herstart verbindt ESP met het ingevoerde netwerk
+
+**Beveiliging:**
+- Formulier valideert SSID (max 32 tekens, niet leeg) en wachtwoord (max 63)
+- Credentials worden uitsluitend opgeslagen in NVS (`wifi_creds`)
+- Portal drukt geen credentials naar seriële monitor
+
+**Technisch:**
+- `WebServer` (poort 80) + `DNSServer` (poort 53) — beide in Arduino ESP32-SDK
+- Geen externe library nodig
+- Tijdens portal: RFID en encoder worden geskipt in `loop()`
+- `wifiPortalActive()` controleert in WiFi reconnect om dubbele init te voorkomen
+
+```cpp
+// Automatisch bij geen credentials (setup):
+wifiPortalStart();
+displaySetPortalActive(true);
+
+// Handmatig via Settings-knop:
+void onWifiPortalStart() { wifiPortalStart(); displaySetPortalActive(true); }
+void onWifiPortalStop()  { wifiPortalStop();  displaySetPortalActive(false); }
+```
 
 #### OTA firmware-update
 - ArduinoOTA actief na WiFi-verbinding
