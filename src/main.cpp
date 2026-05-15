@@ -15,6 +15,7 @@
 #include "includes.h"
 #include "HueControl.h"
 #include "WifiPortal.h"
+#include "OtaServer.h"
 
 #define SS_PIN  5
 #define RST_PIN 17
@@ -87,6 +88,46 @@ void enc1ButtonClick();
 void enc1ButtonLongPress();
 
 // ---------------------------------------------------------------------------
+// OTA helpers
+// ---------------------------------------------------------------------------
+static void _setupOTA()
+{
+    ArduinoOTA.setHostname("K2-RFID");
+
+    ArduinoOTA.onStart([]() {
+        String type = (ArduinoOTA.getCommand() == U_FLASH) ? "firmware" : "bestandssysteem";
+        Serial.println("[ArduinoOTA] start – type: " + type);
+        displayShowOtaStart();
+    });
+
+    ArduinoOTA.onEnd([]() {
+        Serial.println("[ArduinoOTA] klaar");
+        displayShowOtaEnd();
+        delay(500);
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        // Display alleen per 10% updaten – frequente SPI-transfers blokkeren
+        // de espota receive-loop en veroorzaken OTA_RECEIVE_ERROR (3).
+        static uint8_t lastStep = 0xFF;
+        uint8_t pct  = (uint8_t)(progress * 100 / total);
+        uint8_t step = pct / 10;
+        if (step != lastStep) {
+            lastStep = step;
+            displayShowOtaProgress(pct);
+        }
+    });
+
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("[ArduinoOTA] fout #%u\n", error);
+        displayShowOtaError((int)error);
+    });
+
+    ArduinoOTA.begin();
+    Serial.println("[ArduinoOTA] ready (hostname: K2-RFID)");
+}
+
+// ---------------------------------------------------------------------------
 // WiFi portal callbacks – triggered by Settings touch handler
 // ---------------------------------------------------------------------------
 void onWifiPortalStart()
@@ -114,7 +155,8 @@ void onWifiReconnect()
         displaySetWifi(true);
         displaySetPortalActive(false, WiFi.SSID().c_str());
         configTime(3600, 3600, "pool.ntp.org");
-        ArduinoOTA.begin();
+        _setupOTA();
+        otaServerStart();
         Serial.println("[WiFi] herverbonden");
     }
     else
@@ -411,11 +453,8 @@ void setup()
             {
                 displaySetPortalActive(false, WiFi.SSID().c_str());
                 configTime(3600, 3600, "pool.ntp.org");
-                ArduinoOTA.setHostname("K2-RFID");
-                ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-                    displayShowOtaProgress((uint8_t)(progress * 100 / total));
-                });
-                ArduinoOTA.begin();
+                _setupOTA();
+                otaServerStart();
                 Serial.println("[OTA] ready");
             }
         }
@@ -542,13 +581,17 @@ void loop()
                 displaySetWifi(true);
                 displaySetPortalActive(false, WiFi.SSID().c_str());
                 configTime(3600, 3600, "pool.ntp.org");
-                ArduinoOTA.begin();
+                _setupOTA();
+                otaServerStart();
                 Serial.println("[WiFi] herverbonden");
             }
         }
     }
 
-    if (wifiOk) ArduinoOTA.handle();
+    if (wifiOk) {
+        ArduinoOTA.handle();
+        otaServerLoop();
+    }
 
 #ifdef DEBUG
     if (millis() - _lastRfidDbg > 5000)

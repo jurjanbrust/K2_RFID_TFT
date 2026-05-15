@@ -135,20 +135,61 @@ void displayToast(const char* msg)
 // ---------------------------------------------------------------------------
 // OTA progress overlay
 // ---------------------------------------------------------------------------
-void displayShowOtaProgress(uint8_t pct)
+void displayShowOtaStart()
 {
-    _tft->fillRoundRect(40, 112, 400, 80, 8, TFT_BLACK);
-    _tft->drawRoundRect(40, 112, 400, 80, 8, TFT_WHITE);
+    _tft->fillScreen(TFT_BLACK);
+    _tft->setTextFont(4);
+    _tft->setTextColor(CLR_ACCENT, TFT_BLACK);
+    _tft->setCursor(60, 100);
+    _tft->print("Firmware update");
     _tft->setTextFont(2);
     _tft->setTextColor(TFT_WHITE, TFT_BLACK);
-    _tft->setCursor(60, 124);
-    _tft->print("OTA firmware update...");
-    _tft->drawRect(60, 148, 360, 22, CLR_LABEL);
+    _tft->setCursor(60, 136);
+    _tft->print("Bezig met laden...");
+    _tft->drawRect(60, 200, 360, 22, CLR_LABEL);
+}
+
+void displayShowOtaProgress(uint8_t pct)
+{
+    // displayShowOtaStart heeft scherm + kader al opgebouwd –
+    // hier alleen de balk en het percentage bijwerken (geen full redraw → geen knipperen)
     uint16_t barW = (uint16_t)(356UL * pct / 100);
-    _tft->fillRect(62, 150, barW, 18, CLR_ACCENT);
+    _tft->fillRect(62, 202, barW, 18, CLR_ACCENT);
+    if (barW < 356) _tft->fillRect(62 + barW, 202, 356 - barW, 18, TFT_BLACK);
     char buf[8];
-    snprintf(buf, sizeof(buf), "%d%%", pct);
+    snprintf(buf, sizeof(buf), "%3d%%", pct);
     _tft->setTextFont(2);
-    _tft->setCursor(222, 152);
+    _tft->setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft->setCursor(222, 204);
     _tft->print(buf);
+}
+
+void displayShowOtaEnd()
+{
+    _tft->fillScreen(TFT_BLACK);
+    _tft->setTextFont(4);
+    _tft->setTextColor(0x07E0, TFT_BLACK);   // groen
+    _tft->setCursor(60, 110);
+    _tft->print("Update gelukt!");
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft->setCursor(60, 150);
+    _tft->print("Apparaat herstart automatisch...");
+}
+
+void displayShowOtaError(int errCode)
+{
+    _tft->fillScreen(TFT_BLACK);
+    _tft->setTextFont(4);
+    _tft->setTextColor(0xF800, TFT_BLACK);   // rood
+    _tft->setCursor(60, 100);
+    _tft->print("OTA mislukt");
+    _tft->setTextFont(2);
+    _tft->setTextColor(TFT_WHITE, TFT_BLACK);
+    _tft->setCursor(60, 140);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "Foutcode: %d", errCode);
+    _tft->print(buf);
+    _tft->setCursor(60, 158);
+    _tft->print("Herstart het apparaat handmatig.");
 }

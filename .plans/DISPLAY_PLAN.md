@@ -341,14 +341,41 @@ void onWifiPortalStop()  { wifiPortalStop();  displaySetPortalActive(false); }
 ```
 
 #### OTA firmware-update
-- ArduinoOTA actief na WiFi-verbinding
-- Bij OTA-upload: voortgangsbalk op het scherm, alle andere taken gepauzeerd
-- Voortgang via `ArduinoOTA.onProgress()` callback
+
+**ArduinoOTA (UDP – PlatformIO / Arduino IDE upload via netwerk):**
+- Hostname: `K2-RFID` (zichtbaar in PlatformIO upload target)
+- Alle 4 callbacks geïmplementeerd via `_setupOTA()` in `main.cpp`:
+  - `onStart` → `displayShowOtaStart()` — volledig scherm "Firmware update"
+  - `onProgress` → `displayShowOtaProgress(pct)` — voortgangsbalk
+  - `onEnd` → `displayShowOtaEnd()` — groen "Update gelukt! Herstart..."
+  - `onError` → `displayShowOtaError(code)` — rood "OTA mislukt – foutcode X"
+- Wordt gestart bij WiFi-verbinding (setup + reconnect + 30s retry)
+
+**HTTP OTA (browser-upload – `OtaServer.h` / `OtaServer.cpp`):**
+- WebServer poort 80, actief zolang WiFi verbonden is (niet tijdens captive portal)
+- `GET /` → HTML-formulier met `<input type="file">` + Ajax progress bar in de browser
+- `POST /update` → verwerkt `.bin` via ingebouwde `Update` library → automatische herstart
+- URL zichtbaar op het scherm: Settings → WiFi-tab → `http://<IP>/update`
+
+**Display functies (`display_draw.cpp`):**
+| Functie | Wanneer |
+|---|---|
+| `displayShowOtaStart()` | Begin van upload (ArduinoOTA of HTTP) |
+| `displayShowOtaProgress(pct)` | Per chunk / voortgangs-tick |
+| `displayShowOtaEnd()` | Succesvolle afronding, vóór herstart |
+| `displayShowOtaError(code)` | Bij fout, code getoond op scherm |
 
 ```cpp
-ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    displayShowOtaProgress(progress * 100 / total);
-});
+// _setupOTA() – gecentraliseerd in main.cpp
+ArduinoOTA.setHostname("K2-RFID");
+ArduinoOTA.onStart([]()    { displayShowOtaStart(); });
+ArduinoOTA.onProgress(...) { displayShowOtaProgress(pct); });
+ArduinoOTA.onEnd([]()      { displayShowOtaEnd(); });
+ArduinoOTA.onError(...)    { displayShowOtaError(code); });
+ArduinoOTA.begin();
+
+// HTTP upload – loop
+if (wifiOk) { ArduinoOTA.handle(); otaServerLoop(); }
 ```
   Temperatuur       –   [ 21°C ]   +
   Ventilator   [Auto] [Laag] [Mid] [Hoog] [Max]

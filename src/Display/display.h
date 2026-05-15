@@ -73,7 +73,10 @@ void displaySetLastAction(const char* action);
 void displaySetPortalActive(bool active, const char* ssid = "");
 void displaySetHueConfig(const char* ip, bool hasToken);
 void displayToast(const char* msg);
+void displayShowOtaStart();
 void displayShowOtaProgress(uint8_t pct);
+void displayShowOtaEnd();
+void displayShowOtaError(int errCode);
 void displayCalibrate();
 
 // Encoder helpers – called from main.cpp

@@ -1,4 +1,5 @@
 #include "display_internal.h"
+#include <WiFi.h>
 
 // ---------------------------------------------------------------------------
 // Settings – tab bar
@@ -87,7 +88,7 @@ static void _drawSettingsWifi()
         _btn(200, 132, 180, 30, "WiFi portal", false, 2);
     }
 
-    // OTA status
+    // OTA status + URL
     _tft->setTextFont(2);
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
     _tft->setCursor(12, 176);
@@ -96,14 +97,16 @@ static void _drawSettingsWifi()
     _tft->setCursor(60, 176);
     _tft->print(_wifiOk ? "actief (K2-RFID)" : "inactief");
 
-    // Portal uitleg
-    if (!_portalActive && !_wifiOk) {
+    if (_wifiOk) {
         _tft->setTextFont(2);
         _tft->setTextColor(0x4A49, CLR_BODY_BG);
-        _tft->setCursor(12, 200);
-        _tft->print("Druk 'WiFi portal' om SSID + wachtwoord in");
-        _tft->setCursor(12, 216);
-        _tft->print("te stellen via je telefoon of laptop.");
+        _tft->setCursor(12, 196);
+        _tft->print("Browser update:");
+        _tft->setTextColor(0xFDE0, CLR_BODY_BG);
+        _tft->setCursor(120, 196);
+        char urlBuf[48];
+        snprintf(urlBuf, sizeof(urlBuf), "http://%s/update", WiFi.localIP().toString().c_str());
+        _tft->print(urlBuf);
     }
 }
 
