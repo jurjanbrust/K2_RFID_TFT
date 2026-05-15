@@ -3,3 +3,4 @@
 #include "DB/matdb.h"
 #include "WWW/html.h"
 #include "Display/display.h"
+#include "HueControl.h"
