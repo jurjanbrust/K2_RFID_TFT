@@ -32,16 +32,16 @@
 
 enum WriteStatus { STATUS_IDLE, STATUS_WRITING, STATUS_SUCCESS, STATUS_ERROR };
 
-// Colours (RGB565)
-#define CLR_HEADER_BG  0x0319
-#define CLR_BODY_BG    0x0208
-#define CLR_LABEL      0x7BEF
-#define CLR_ACCENT     0x041F
-#define CLR_SUCCESS_BG 0x0340
-#define CLR_ERROR_BG   0x8000
-#define CLR_WRITING_BG 0x8420
-#define CLR_IDLE_BG    0x2104
-#define CLR_STATUS_BG  0x1082
+// Colours (RGB565) – LCARS / Star Trek stijl
+#define CLR_HEADER_BG  0x0000   // zwart
+#define CLR_BODY_BG    0x0000   // zwart
+#define CLR_LABEL      0xFD40   // LCARS amber-oranje
+#define CLR_ACCENT     0xFD40   // LCARS amber-oranje (actief)
+#define CLR_SUCCESS_BG 0x03E0   // groen
+#define CLR_ERROR_BG   0xF800   // rood
+#define CLR_WRITING_BG 0x545F   // LCARS blauw (bezig)
+#define CLR_IDLE_BG    0x0000   // zwart
+#define CLR_STATUS_BG  0x0000   // zwart
 
 // Audio action codes passed to onIrAudio()
 #define IR_AUDIO_PLAYPAUSE  0
