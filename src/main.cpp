@@ -551,6 +551,7 @@ void loop()
   if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI && piccType != MFRC522::PICC_TYPE_MIFARE_1K && piccType != MFRC522::PICC_TYPE_MIFARE_4K)
   {
     Serial.println("[RFID] unsupported card type – skipping");
+    mfrc522.PICC_HaltA();
     _rfidBusyUntil = millis() + 2000;
     return;
   }
@@ -562,12 +563,20 @@ void loop()
   Serial.printf("[RFID] auth key A: %s\n", MFRC522::GetStatusCodeName(status));
   if (status != MFRC522::STATUS_OK)
   {
-    // Retry with encrypted key – reuse the already-read UID, do NOT re-read the card
-    // (re-reading could race with a different card being presented)
+    // Na mislukte auth: stop crypto en herdetecteer kaart om communicatiekanaal te resetten
+    mfrc522.PCD_StopCrypto1();
+    if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
+    {
+      displaySetStatus(STATUS_ERROR);
+      _rfidBusyUntil = millis() + 2000;
+      return;
+    }
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 7, &ekey, &(mfrc522.uid));
     Serial.printf("[RFID] auth ekey: %s\n", MFRC522::GetStatusCodeName(status));
     if (status != MFRC522::STATUS_OK)
     {
+      mfrc522.PICC_HaltA();
+      mfrc522.PCD_StopCrypto1();
       displaySetStatus(STATUS_ERROR);
       _rfidBusyUntil = millis() + 2000;
       return;
@@ -608,6 +617,15 @@ void loop()
     byte byteCount = sizeof(buffer);
     byte block = 7;
     status = mfrc522.MIFARE_Read(block, buffer, &byteCount);
+    if (status != MFRC522::STATUS_OK)
+    {
+      Serial.printf("[RFID] block 7 read failed: %s\n", MFRC522::GetStatusCodeName(status));
+      mfrc522.PICC_HaltA();
+      mfrc522.PCD_StopCrypto1();
+      displaySetStatus(STATUS_ERROR);
+      _rfidBusyUntil = millis() + 2000;
+      return;
+    }
     int y = 0;
     for (int i = 10; i < 16; i++)
     {
