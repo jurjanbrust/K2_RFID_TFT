@@ -2,15 +2,18 @@
 
 ## Overzicht
 
-Vijf pagina's, twee rotary encoders met vaste rollen:
+Vijf pagina's, één rotary encoder met twee modi:
 
-| Encoder | Rol |
+| Modus | Rol |
 |---|---|
-| **Enc 1** (links) | Waarden instellen op de actieve pagina |
-| **Enc 2** (rechts) | Paginanavigatie (altijd, ongeacht pagina) |
+| **Draaien** | Waarden instellen op de actieve pagina |
+| **Knop ingedrukt houden + draaien** | Paginanavigatie (werkt altijd, ongeacht pagina) |
+| **Klik** | Context-actie op de actieve pagina |
+| **Lang indrukken** | Context-actie op de actieve pagina |
 
-Enc 2 draaien wisselt de actieve pagina met wrapround:  
-`pagina = ((huidige + delta) % 5 + 5) % 5`
+Knop ingedrukt houden detectie: zodra de knop > 50 ms ingedrukt is, schakelt de encoder naar paginamodus. Encoder-pulsen in die modus wisselen de pagina met wrapround:  
+`pagina = ((huidige + delta) % 5 + 5) % 5`  
+Bij loslaten van de knop: terug naar waarde-modus (geen klik-actie als er gepagineerd is).
 
 ---
 
@@ -26,13 +29,14 @@ Enc 2 draaien wisselt de actieve pagina met wrapround:
 │                                                     │
 ├─────────────────────────────────────────────────────┤
 │  Statusbalk (y=276..319)                            │
-│  Enc1: [context]   |   Enc2: pagina  ◄  ►          │
+│  Enc: [context]   |  ⟳ ingedrukt + draaien: pagina  │
+│  Slaap over: 4:32                                   │
 └─────────────────────────────────────────────────────┘
 ```
 
 - **Header**: vijf stippen (actieve stip = accentkleur) + paginanaam + NTP-klok rechts + optionele kamertemperatuur
-- **Statusbalk**: toont live wat de encoders doen op de huidige pagina
-- **Swipe**: sleep links/rechts over het scherm wisselt ook van pagina (alternatief voor enc2 draaien)
+- **Statusbalk**: toont live wat de encoder doet op de huidige pagina + herinnering aan paginanavigatie; rechtsonder een aflopende countdown (`Slaap over M:SS`) die de laatste 60 s zichtbaar wordt en bij activiteit direct verdwijnt
+- **Swipe**: sleep links/rechts over het scherm wisselt ook van pagina (alternatief voor knop ingedrukt + draaien)
 
 ---
 
@@ -67,9 +71,10 @@ Filament-instellingen selecteren en naar kaart schrijven. Bevat ook een lees-mod
 
 | Bediening | Actie |
 |---|---|
-| Enc1 draaien | Veld selecteren (merk → type → kleur, cyclisch) |
-| Enc1 klik | Waarde binnen veld wijzigen / subtab wisselen |
-| Enc1 lang | Schrijf naar RFID-kaart (vervangt automatisch schrijven) |
+| Enc draaien | Veld selecteren (merk → type → kleur, cyclisch) |
+| Enc klik | Waarde binnen veld wijzigen / subtab wisselen |
+| Enc lang | Schrijf naar RFID-kaart (vervangt automatisch schrijven) |
+| Knop + draaien | Paginanavigatie |
 | Touch | Directe selectie merk / type / kleur / subtab |
 
 > **Let op**: automatisch schrijven bij kaarttapping wordt achter een vlag gezet zodra enc1-lang is geïmplementeerd.
@@ -85,7 +90,7 @@ Bedient twee systemen: **WLED** (LED-strip, HTTP GET) en **Philips Hue** (HTTP P
 De pagina heeft twee subtabs — Enc1-klik wisselt tussen de twee systemen.
 
 ```
-  [ WLED ]  [ Hue ]          ← subtab, Enc1 klik wisselt
+  [ WLED ]  [ Hue ]          ← subtab, Enc klik wisselt
   ─────────────────────────────────────────────────────
 
   — WLED subtab —
@@ -93,7 +98,7 @@ De pagina heeft twee subtabs — Enc1-klik wisselt tussen de twee systemen.
   Helderheid   ████████░░  78%
 
   Scenes:  [ Film ]  [ Gaming ]  [ Lezen ]  [ Feest ]  [ Nacht ]
-           (Enc1 draaien scrolt, actieve scene highlighted)
+           (Enc draaien scrolt, actieve scene highlighted)
 
   [    Aan    ]        [    Uit    ]
 
@@ -101,24 +106,24 @@ De pagina heeft twee subtabs — Enc1-klik wisselt tussen de twee systemen.
   — Hue subtab —
 
   Kamer:   [ Woonkamer ]  [ Slaapkamer ]  [ Keuken ]  [ Bureau ]
-           (Enc2 klik scrolt door kamers)
+           (kamer wisselen via touch)
 
   Scenes:  [ Ontspannen ]  [ Lezen ]  [ Concentrate ]  [ Nacht ]
            [ Helder ]      [ Energie ]  [ Dimmen ]     [ Uit   ]
-           (Enc1 draaien scrolt, touch of Enc1 klik activeert)
+           (Enc draaien scrolt, touch of Enc klik activeert)
 
   Helderheid   ████████░░  65%
 ```
 
 | Bediening | WLED | Hue |
 |---|---|---|
-| Enc1 draaien | Scene scrollen | Scene scrollen |
-| Enc1 klik | Subtab wisselen (WLED ↔ Hue) | Scene activeren |
-| Enc1 lang | Aan / Uit toggle | Aan / Uit toggle (hele kamer) |
-| Enc2 klik | — | Volgende kamer |
-| Touch | Directe scene of aan/uit | Directe scene, kamer of aan/uit |
+| Enc draaien | Scene scrollen | Scene scrollen |
+| Enc klik | Subtab wisselen (WLED ⇔ Hue) | Scene activeren |
+| Enc lang | Aan / Uit toggle | Aan / Uit toggle (hele kamer) |
+| Knop + draaien | Paginanavigatie | Paginanavigatie |
+| Touch | Directe scene of aan/uit | Directe scene, kamer of aan/uit (incl. kamerwisseling) |
 
-> **Helderheid op Hue**: na scene-activatie kan enc1 lang indrukken overschakelen naar brightness-modus. Een tweede lang-druk keert terug naar scene-modus. Dit wordt getoond in de statusbalk.
+> **Helderheid op Hue**: na scene-activatie kan enc lang indrukken overschakelen naar brightness-modus. Een tweede lang-druk keert terug naar scene-modus. Dit wordt getoond in de statusbalk.
 
 #### Philips Hue – technische uitwerking
 
@@ -191,11 +196,11 @@ Audiobron en volumebediening, met Spotify-placeholder voor toekomstige albumweer
 
 | Bediening | Actie |
 |---|---|
-| Enc1 draaien | Volume +/- (NEC IR `VOLUP` / `VOLDOWN`) |
-| Enc1 klik | Play / Pause |
-| Enc1 lang | Receiver aan / uit |
-| Enc2 klik | Invoerbron cyklus (Line1 → Line2 → Bluetooth) |
-| Touch | Directe bron / play / skip |
+| Enc draaien | Volume +/- (NEC IR `VOLUP` / `VOLDOWN`) |
+| Enc klik | Play / Pause |
+| Enc lang | Receiver aan / uit |
+| Knop + draaien | Paginanavigatie |
+| Touch | Directe bron / play / skip (incl. invoerbronwisseling) |
 
 #### Spotify (toekomstige fase)
 - Library: [`spotify-api-arduino`](https://github.com/witnessmenow/spotify-api-arduino) — beheert OAuth2 token-refresh
@@ -221,9 +226,10 @@ Combineer lamp + airco + audio in één druk. Macros worden opgeslagen in NVS.
 
 | Bediening | Actie |
 |---|---|
-| Enc1 draaien | Macro selecteren in lijst |
-| Enc1 klik | Geselecteerde macro uitvoeren |
-| Enc1 lang | Macro bewerken (subtab met losse instellingen per systeem) |
+| Enc draaien | Macro selecteren in lijst |
+| Enc klik | Geselecteerde macro uitvoeren |
+| Enc lang | Macro bewerken (subtab met losse instellingen per systeem) |
+| Knop + draaien | Paginanavigatie |
 | Touch | Directe activatie via tik op macro-rij |
 
 #### Ingebouwde macro's
@@ -282,12 +288,13 @@ Systeem- en netwerkconfiguratie zonder seriële terminal.
 
 | Bediening | Actie |
 |---|---|
-| Enc1 draaien | Waarde aanpassen (helderheid, slaaptijd) |
-| Enc1 klik | Subtab wisselen |
+| Enc draaien | Waarde aanpassen (helderheid, slaaptijd) |
+| Enc klik | Subtab wisselen |
+| Knop + draaien | Paginanavigatie |
 | Touch | Directe bediening alle instellingen |
 
 #### Tekst invoer
-WiFi SSID/wachtwoord en Bridge IP via alfabet-scrolllijst (enc1 draaien = letter, enc1 klik = volgende positie, enc1 lang = bevestigen). Toont huidige invoer als `MijnN_` met cursor.
+WiFi SSID/wachtwoord en Bridge IP via alfabet-scrolllijst (enc draaien = letter, enc klik = volgende positie, enc lang = bevestigen). Toont huidige invoer als `MijnN_` met cursor.
 
 #### OTA firmware-update
 - ArduinoOTA actief na WiFi-verbinding
@@ -307,11 +314,11 @@ ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 
 | Bediening | Actie |
 |---|---|
-| Enc1 draaien | Temperatuur +/- |
-| Enc1 klik | Ventilatiestand omhoog (auto → laag → … → max → auto) |
-| Enc1 lang | Power toggle (aan/uit) |
-| Enc2 klik | Modus cyklus (Auto → Koelen → Verwarmen) |
-| Touch | Directe bediening alle elementen |
+| Enc draaien | Temperatuur +/- |
+| Enc klik | Ventilatiestand omhoog (auto → laag → … → max → auto) |
+| Enc lang | Power toggle (aan/uit) |
+| Knop + draaien | Paginanavigatie |
+| Touch | Modus cyklus (Auto → Koelen → Verwarmen) |
 
 ---
 
@@ -319,7 +326,7 @@ ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 
 | Fase | Wat | Bestanden |
 |---|---|---|
-| **1** | Enc2 draaien → paginanavigatie; header 5 stippen + naam | `display.h`, `main.cpp` |
+| **1** | Knop+draaien → paginanavigatie; header 5 stippen + naam | `display.h`, `main.cpp` |
 | **2** | Swipe-gesture paginawisseling (links/rechts sleep) | `display.h` |
 | **3** | Statusbalk dynamisch per pagina (encoder-context) | `display.h` |
 | **4** | NTP klok in header | `main.cpp` |
@@ -330,7 +337,7 @@ ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 | **9** | Pagina 1 – Lamp: WLED scenes + Hue subtab + kamers | `display.h`, `main.cpp` |
 | **9a** | Hue token-provisioning via instellingen + NVS opslag | `main.cpp` |
 | **9b** | Hue scene-activatie en kamer-wisseling | `main.cpp` |
-| **10** | Pagina 0 – RFID enc1-veldselectie + schrijf via lang indrukken | `display.h`, `main.cpp` |
+| **10** | Pagina 0 – RFID enc-veldselectie + schrijf via lang indrukken | `display.h`, `main.cpp` |
 | **10a** | RFID lees-modus subtab | `display.h`, `main.cpp` |
 | **10b** | Schrijfhistorie in LittleFS | `main.cpp` |
 | **11** | Toast-notificaties (tijdelijke overlay) | `display.h` |
@@ -339,20 +346,133 @@ ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
 | **13a** | Alfabet-scrolllijst voor tekst invoer | `display.h` |
 | **14** | Spotify API integratie (album art + metadata) | `main.cpp`, `platformio.ini` |
 | **15** | Temperatuursensor (DS18B20 of SHT31) in header | `main.cpp`, `platformio.ini` |
+| **16** | Code opsplitsen in losse `.cpp`-modules | alle bestanden |
+
+---
+
+## Codestructuur – opsplitsing in modules
+
+De huidige `main.cpp` (~500 regels) wordt opgesplitst in verantwoordelijke modules. Elk `.cpp`-bestand krijgt een bijpassend `.h`-headerbestand in `src/`.
+
+### Doelstructuur
+
+```
+src/
+├── main.cpp              ← setup(), loop(), encoder-ISR, button-callbacks
+├── wifi.cpp / .h         ← WiFiManager portal, reconnect, OTA
+├── wled.cpp / .h         ← WLED HTTP-commando's, scene- en helderheidsbeheer
+├── airco.cpp / .h        ← IR-zenden Mitsubishi, toestandsbeheer airco
+├── audio.cpp / .h        ← IR-zenden NEC (audio), bronselectie
+├── rfid.cpp / .h         ← RFID lezen/schrijven, AES, spoolData, schrijfhistorie
+├── macros.cpp / .h       ← Macro-definitie, NVS-opslag, uitvoering
+├── Display/
+│   ├── display.h         ← alle display- en touch-functies (blijft één header)
+```
+
+### wifi.cpp – WiFiManager portal van IRremote overnemen
+
+De `AircoWifi`-klasse uit het IRremote-project bevat een volwaardige captive-portal implementatie via **WiFiManager**. Dit wordt direct overgenomen en licht aangepast:
+
+- **Captive portal**: als geen bekende SSID beschikbaar → start hotspot `K2-RFID-Setup`, browser opent configuratiepagina
+- **Fallback**: eerst proberen met opgeslagen credentials uit NVS (`Preferences`, namespace `wifi_creds`)
+- **Timeout**: portal sluit automatisch na 3 minuten; device start opnieuw op
+- **Hostname**: `k2-rfid.local` (mDNS via `WiFi.setHostname()`)
+- **Scherm-feedback**: tijdens portal toont display een instructiepagina (`Verbind met "K2-RFID-Setup"`)
+
+```cpp
+// wifi.h
+#pragma once
+#include <WiFiManager.h>
+
+void wifiInit();           // eerste verbinding + portal indien nodig
+void wifiLoop();           // reconnect-check elke 30 s
+bool wifiIsConnected();
+String wifiLocalIP();
+```
+
+```cpp
+// wifi.cpp – gebaseerd op IRremote/src/AircoWifi.cpp
+static WiFiManager _wm;
+
+void wifiInit() {
+    WiFi.mode(WIFI_STA);
+    WiFi.setHostname("k2-rfid");
+    _wm.setConfigPortalTimeout(180);
+    _wm.setConnectTimeout(10);
+    _wm.setAPCallback([](WiFiManager* m) {
+        Serial.println("[WiFi] portal actief: " + m->getConfigPortalSSID());
+        displayShowWifiPortal(m->getConfigPortalSSID().c_str());
+    });
+    bool ok = _wm.autoConnect("K2-RFID-Setup");
+    Serial.println(ok ? "[WiFi] verbonden: " + WiFi.localIP().toString()
+                      : "[WiFi] geen verbinding");
+    displaySetWifi(ok);
+}
+
+void wifiLoop() {
+    static unsigned long _lastRetry = 0;
+    if (WiFi.status() != WL_CONNECTED && millis() - _lastRetry > 30000) {
+        _lastRetry = millis();
+        Serial.println("[WiFi] reconnect...");
+        WiFi.reconnect();
+    }
+    bool ok = (WiFi.status() == WL_CONNECTED);
+    displaySetWifi(ok);
+}
+```
+
+### Verdeling van verantwoordelijkheden
+
+| Module | Bevat |
+|---|---|
+| `main.cpp` | `setup()`, `loop()`, encoder-ISR, button-callbacks, `onIr*`-dispatchers |
+| `wifi.cpp` | WiFiManager portal, reconnect, mDNS, OTA-init |
+| `wled.cpp` | `_wledGet()`, `onWledScene()`, `onWledBrightness()`, `onWledPower()` |
+| `airco.cpp` | `onIrTempDelta()`, `onIrFanChange()`, `onIrAcMode()`, `onIrPower()`, IR-zenden |
+| `audio.cpp` | `onIrAudio()`, NEC IR-zenden (play/pause, volume, bron) |
+| `rfid.cpp` | RFID lezen/schrijven, AES-encryptie, `spoolData`, schrijfhistorie LittleFS |
+| `macros.cpp` | `Macro`-struct, NVS-opslag, `onMacroExecute()` |
+
+### Aanpak migratie
+
+1. Maak per module een leeg `.h` + `.cpp` aan in `src/`
+2. Verplaats functies en state vanuit `main.cpp` – één module tegelijk
+3. Vervang in `main.cpp` door `#include "wifi.h"` etc.
+4. Valideer na elke stap met `pio run`
 
 ---
 
 ## Technische aandachtspunten
 
-### Enc2 paginanavigatie
+### Paginanavigatie via knop-ingedrukt + draaien
 ```cpp
-// In loop(), encoder2-blok vervangen door:
-int newEnc2Pos = encoder2.getPosition();
-if (newEnc2Pos != lastEnc2Pos) {
-    int delta = newEnc2Pos - lastEnc2Pos;
-    lastEnc2Pos = newEnc2Pos;
-    uint8_t newPage = ((int)displayGetPage() + (delta > 0 ? 1 : -1) + 5) % 5;
-    displaySetPage(newPage);
+// In loop(): encoder paginamodus actief zolang knop ingedrukt is
+static bool encBtnHeld    = false;
+static bool pageModeUsed  = false; // voorkom klik-actie na paginawissel
+
+bool btnNow = (digitalRead(ENC_BTN_PIN) == LOW);
+if (btnNow && !encBtnHeld) {
+    encBtnHeld   = true;
+    pageModeUsed = false;
+}
+
+if (encBtnHeld) {
+    int newPos = encoder.getPosition();
+    if (newPos != lastEncPos) {
+        int delta = newPos - lastEncPos;
+        lastEncPos   = newPos;
+        pageModeUsed = true;
+        uint8_t newPage = ((int)displayGetPage() + (delta > 0 ? 1 : -1) + 5) % 5;
+        displaySetPage(newPage);
+    }
+}
+
+if (!btnNow && encBtnHeld) {
+    encBtnHeld = false;
+    if (!pageModeUsed) {
+        // Geen paginawissel geweest: verwerk als normale klik
+        handleEncoderClick();
+    }
 }
 ```
 
@@ -369,9 +489,31 @@ if (startX - endX > 60 && dt < 400) displayPrevPage();
 ### Statusbalk encoder-context
 Elke pagina registreert een contextstring bij activatie:
 ```cpp
-displaySetEncoderHint("Enc1: Volume  |  Enc2: pagina");
+displaySetEncoderHint("Enc: Volume  |  knop+draaien: pagina");
 ```
 De statusbalk hergebruikt het bestaande `_drawIrStatusBar()`-patroon, uitgebreid voor alle pagina's.
+
+#### Sleep-countdown in statusbalk
+De laatste **60 seconden** voor de slaapstand verschijnt rechtsonder in de statusbalk een aflopende timer (`Slaap over M:SS`).  
+Bij elke activiteit (touch of encoder) verdwijnt de timer direct en start de countdown opnieuw.
+
+```cpp
+// In _drawStatusBar() / displayLoop(), elke seconde:
+unsigned long idle = millis() - _lastActivity;
+unsigned long remaining = _sleepAfterMs - idle;
+if (_screenOn && remaining <= 60000) {
+    unsigned int secs = remaining / 1000;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "Slaap %d:%02d", secs / 60, secs % 60);
+    // Teken rechts in statusbalk, kleine font, accentkleur
+    _tft->setTextColor(CLR_ACCENT, CLR_STATUS_BG);
+    _tft->drawString(buf, 370, 292, 2);
+} else {
+    // Wis countdown-gebied als niet actief
+    _tft->fillRect(360, 284, 120, 20, CLR_STATUS_BG);
+}
+```
+De countdown wordt alleen iedere seconde hertekend (via `millis()`-vergelijking), niet elke loop-iteratie.
 
 ### NTP klok
 ```cpp
@@ -385,12 +527,12 @@ Tijd wordt rechts in de header getekend. Geen extra library nodig.
 
 ### Scherm-slaapstand
 ```cpp
-// GPIO 25 = backlight
+// GPIO TFT_BL (12) = backlight
 if (millis() - _lastActivity > _sleepAfterMs)
-    digitalWrite(25, LOW);   // scherm uit
+    digitalWrite(TFT_BL, LOW);   // scherm uit
 // Bij elke touch of encoder-beweging:
 _lastActivity = millis();
-digitalWrite(25, HIGH);      // scherm aan
+digitalWrite(TFT_BL, HIGH);      // scherm aan
 ```
 Slaaptijd instelbaar via Instellingen-pagina, opgeslagen in NVS.
 
@@ -468,7 +610,7 @@ Elke fase is klaar als **alle** criteria groen zijn. Compile-criteria worden gec
 
 ---
 
-### Fase 1 – Enc2 paginanavigatie + header 5 stippen
+### Fase 1 – Knop+draaien paginanavigatie + header 5 stippen
 
 **Compile**: `pio run` zonder errors of warnings.
 
@@ -512,9 +654,9 @@ Elke fase is klaar als **alle** criteria groen zijn. Compile-criteria worden gec
 
 **Runtime Serial**:
 ```
-[HINT] Enc1: Veld  |  Enc2: pagina
-[HINT] Enc1: Volume  |  Enc2: pagina
-[HINT] Enc1: Scene  |  Enc2: pagina
+[HINT] Enc: Veld  |  knop+draaien: pagina
+[HINT] Enc: Volume  |  knop+draaien: pagina
+[HINT] Enc: Scene  |  knop+draaien: pagina
 ```
 
 **Visueel**:
@@ -597,9 +739,9 @@ Elke fase is klaar als **alle** criteria groen zijn. Compile-criteria worden gec
 
 **Visueel**:
 - Airco-pagina toont temperatuur, ventilator, modus en status
-- Enc1 draaien update temperatuur live op scherm
-- Enc1 klik scrollt ventilatiestand; highlight verschuift
-- Enc2 klik wisselt modus; highlight verschuift
+- Enc draaien update temperatuur live op scherm
+- Enc klik scrollt ventilatiestand; highlight verschuift
+- Knop+draaien wisselt modus; highlight verschuift
 - Enc1 lang toggle power; status indicator verandert
 
 ---

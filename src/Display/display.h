@@ -1356,8 +1356,8 @@ static void _clearToast()
 
 void displayInit()
 {
-    pinMode(25, OUTPUT);
-    digitalWrite(25, HIGH);  // backlight on
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH);  // backlight on
 
     // Touch bit-bang pins
     pinMode(_T_CLK, OUTPUT); digitalWrite(_T_CLK, LOW);
@@ -1405,7 +1405,7 @@ void displayLoop()
     if (_screenOn && _lastActivity > 0 && millis() - _lastActivity > _sleepAfterMs)
     {
         _screenOn = false;
-        digitalWrite(25, LOW);
+        digitalWrite(TFT_BL, LOW);
     }
 
     // ── Toast clear ───────────────────────────────────────────────────────
@@ -1445,7 +1445,7 @@ void displayLoop()
         {
             _screenOn = true;
             _lastActivity = millis();
-            digitalWrite(25, HIGH);
+            digitalWrite(TFT_BL, HIGH);
             return;  // skip processing on wake frame
         }
         _lastActivity = millis();
@@ -1577,7 +1577,7 @@ void displayWakeup()
     if (!_screenOn)
     {
         _screenOn = true;
-        digitalWrite(25, HIGH);
+        digitalWrite(TFT_BL, HIGH);
     }
 }
 
