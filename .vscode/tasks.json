@@ -2,9 +2,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "PlatformIO: Upload OTA (esp32_ota)",
+            "label": "OTA Upload (esp32_ota)",
             "type": "shell",
-            "command": "platformio run --target upload --environment esp32_ota",
+            "command": "platformio run --target upload --environment esp32_ota --upload-port 192.168.1.229",
             "options": {
                 "cwd": "${workspaceFolder}"
             },

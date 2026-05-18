@@ -23,8 +23,8 @@
 // ---------------------------------------------------------------------------
 struct _BrandDef  { const char* label; };
 struct _MatDef    { uint8_t brand; const char* code; const char* label; };
-struct _HueScene  { const char* name; };
-struct _HueRoom   { const char* name; _HueScene scenes[8]; uint8_t sceneCount; };
+struct _HueScene  { char name[24]; };
+struct _HueRoom   { char name[24]; _HueScene scenes[8]; uint8_t sceneCount; };
 struct _WledScene { const char* name; };
 struct _MacroDef  { const char* name; const char* desc; };
 
@@ -117,9 +117,13 @@ extern uint8_t  _hueSceneSel;
 extern uint8_t  _hueBrightness;
 extern bool     _hueOn;
 extern char     _hueDisplayIp[24];
-extern bool     _hueDisplayToken;
-extern const _HueRoom _hueRooms[];
-extern const uint8_t  _hueRoomCount;
+extern char     _hueDisplayToken[72];
+
+// Hue IP numpad editor
+extern bool     _hueIpEditActive;
+extern char     _hueIpEditBuf[24];
+extern _HueRoom      _hueRooms[];
+extern const uint8_t _hueRoomCount;
 
 // Settings page
 extern uint8_t  _settingsTab;     // 0=Display 1=WiFi 2=RFID 3=Hue
@@ -152,6 +156,8 @@ extern void onHuePower(uint8_t roomIdx, bool on);
 extern void onHueBrightness(uint8_t roomIdx, uint8_t pct);
 extern void onHuePair();
 extern void onHueDeleteToken();
+extern void onHueSetIp(const char* ip);
+extern void onHueRefreshScenes();
 
 // WiFi portal callbacks (implemented in main.cpp)
 extern void onWifiPortalStart();

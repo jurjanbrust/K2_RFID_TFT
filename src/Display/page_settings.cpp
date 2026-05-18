@@ -149,29 +149,130 @@ static void _drawSettingsHue()
     _tft->setTextColor(TFT_WHITE, CLR_BODY_BG);
     _tft->setCursor(100, 102);
     _tft->print(_hueDisplayIp);
+    _btn(352, 94, 90, 26, "Bewerk", false, 2);
 
     _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
     _tft->setCursor(12, 124);
     _tft->print("Token:");
-    if (_hueDisplayToken) {
+    if (_hueDisplayToken[0] != '\0') {
+        char tokShort[20];
+        snprintf(tokShort, sizeof(tokShort), "%.12s...", _hueDisplayToken);
         _tft->setTextColor(0x07E0, CLR_BODY_BG);
         _tft->setCursor(80, 124);
-        _tft->print("Ingesteld");
-        _btn(200, 118, 130, 24, "Verwijderen", false, 2);
+        _tft->print(tokShort);
+        _btn(328, 118, 130, 24, "Verwijderen", false, 2);
     } else {
         _tft->setTextColor(0xFD20, CLR_BODY_BG);
         _tft->setCursor(80, 124);
         _tft->print("Niet ingesteld");
     }
 
-    _btn(12, 148, 280, 34, "Koppelen (druk Bridge-knop)", false, 2);
+    _btn(12, 148, 280, 34, "Koppelen (druk Bridge-knop)", true, 2);
+    _btn(300, 148, 160, 34, "Verversen", false, 2);
 
     _tft->setTextFont(2);
     _tft->setTextColor(0x4A49, CLR_BODY_BG);
     _tft->setCursor(12, 194);
     _tft->print("Druk eerst de Bridge-knop, dan Koppelen.");
     _tft->setCursor(12, 210);
-    _tft->print("Scene-IDs: GET /clip/v2/resource/scene");
+    _tft->print("Verversen haalt scene-namen op van de bridge.");
+}
+
+// ---------------------------------------------------------------------------
+// Hue IP numpad – draw
+// ---------------------------------------------------------------------------
+static void _drawHueIpKeypad()
+{
+    // Body area background
+    _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    // Constants
+    const int16_t BW = 80, BH = 34, GAP = 6;
+    const int16_t X0 = 114;
+    const int16_t YR[] = { 85, 123, 161, 199 };  // 4 digit rows
+
+    // Title label
+    _tft->setTextFont(2);
+    _tft->setTextColor(CLR_LABEL, CLR_BODY_BG);
+    _tft->setCursor(12, 57);
+    _tft->print("Bridge IP invoeren:");
+
+    // Input field background + border
+    _tft->fillRect(200, 52, 260, 28, 0x1082);
+    _tft->drawRect(200, 52, 260, 28, CLR_LABEL);
+
+    // Current input text
+    _tft->setTextFont(4);
+    _tft->setTextColor(TFT_WHITE, 0x1082);
+    _tft->setCursor(208, 55);
+    _tft->print(_hueIpEditBuf);
+
+    // Cursor indicator
+    int16_t cw = _tft->textWidth(_hueIpEditBuf);
+    _tft->fillRect(208 + cw, 57, 6, 18, CLR_ACCENT);
+
+    // Digit keys 1–9 (3×3), then . / 0 / ← on row 4
+    const char* labels[12] = { "1","2","3","4","5","6","7","8","9",".","0","<-" };
+    for (uint8_t row = 0; row < 4; row++) {
+        for (uint8_t col = 0; col < 3; col++) {
+            uint8_t idx = row * 3 + col;
+            int16_t bx = X0 + col * (BW + GAP);
+            _btn(bx, YR[row], BW, BH, labels[idx], false, 4);
+        }
+    }
+
+    // Cancel / OK
+    _btn(100, 238, 120, 30, "Annuleer", false, 2);
+    _btn(260, 238, 120, 30, "OK", true, 4);
+
+    _drawPageStatusBar("Cijfers: invoer  |  <-: wis  |  OK: opslaan", CLR_IDLE_BG);
+}
+
+// ---------------------------------------------------------------------------
+// Hue IP numpad – touch handler
+// ---------------------------------------------------------------------------
+static void _handleHueIpKeypad(uint16_t tx, uint16_t ty)
+{
+    const int16_t BW = 80, BH = 34, GAP = 6;
+    const int16_t X0 = 114;
+    const int16_t YR[] = { 85, 123, 161, 199 };
+
+    // Digit / dot / backspace rows
+    const char keys[12] = { '1','2','3','4','5','6','7','8','9','.','0','\b' };
+    for (uint8_t row = 0; row < 4; row++) {
+        if (ty < (uint16_t)YR[row] || ty > (uint16_t)(YR[row] + BH)) continue;
+        for (uint8_t col = 0; col < 3; col++) {
+            int16_t bx = X0 + col * (BW + GAP);
+            if (tx < (uint16_t)bx || tx > (uint16_t)(bx + BW)) continue;
+            uint8_t idx = row * 3 + col;
+            if (keys[idx] == '\b') {
+                uint8_t len = (uint8_t)strlen(_hueIpEditBuf);
+                if (len > 0) _hueIpEditBuf[len - 1] = '\0';
+            } else {
+                uint8_t len = (uint8_t)strlen(_hueIpEditBuf);
+                if (len < sizeof(_hueIpEditBuf) - 1) {
+                    _hueIpEditBuf[len]     = keys[idx];
+                    _hueIpEditBuf[len + 1] = '\0';
+                }
+            }
+            _drawHueIpKeypad();
+            return;
+        }
+    }
+
+    // Cancel  y=238..268  x=100..220
+    if (ty >= 238 && ty <= 268 && tx >= 100 && tx <= 220) {
+        _hueIpEditActive = false;
+        _drawSettingsPage();
+        return;
+    }
+    // OK  y=238..268  x=260..380
+    if (ty >= 238 && ty <= 268 && tx >= 260 && tx <= 380) {
+        onHueSetIp(_hueIpEditBuf);
+        _hueIpEditActive = false;
+        _drawSettingsPage();
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +281,12 @@ static void _drawSettingsHue()
 void _drawSettingsPage()
 {
     _tft->fillRect(0, 48, 480, 228, CLR_BODY_BG);
+
+    if (_hueIpEditActive) {
+        _drawHueIpKeypad();
+        return;
+    }
+
     _drawSettingsTabBar();
 
     switch (_settingsTab)
@@ -198,6 +305,11 @@ void _drawSettingsPage()
 // ---------------------------------------------------------------------------
 void _handleSettingsTouch(uint16_t tx, uint16_t ty)
 {
+    if (_hueIpEditActive) {
+        _handleHueIpKeypad(tx, ty);
+        return;
+    }
+
     // Tab bar  y=54..86
     if (ty >= 54 && ty <= 86)
     {
@@ -282,11 +394,22 @@ void _handleSettingsTouch(uint16_t tx, uint16_t ty)
         break;
 
     case 3:  // Hue
+        // Bewerk IP  y=94..120  x=352..442
+        if (ty >= 94 && ty <= 120 && tx >= 352 && tx <= 442) {
+            strncpy(_hueIpEditBuf, _hueDisplayIp, sizeof(_hueIpEditBuf) - 1);
+            _hueIpEditBuf[sizeof(_hueIpEditBuf) - 1] = '\0';
+            if (strcmp(_hueIpEditBuf, "--") == 0) _hueIpEditBuf[0] = '\0';
+            _hueIpEditActive = true;
+            _drawSettingsPage();
+        }
         // Koppelen  y=148..182  x=12..292
-        if (ty >= 148 && ty <= 182 && tx >= 12 && tx <= 292)
+        else if (ty >= 148 && ty <= 182 && tx >= 12 && tx <= 292)
             onHuePair();
-        // Verwijder token  y=118..142  x=200..330
-        else if (ty >= 118 && ty <= 142 && tx >= 200 && tx <= 330 && _hueDisplayToken)
+        // Verversen  y=148..182  x=300..460
+        else if (ty >= 148 && ty <= 182 && tx >= 300 && tx <= 460)
+            onHueRefreshScenes();
+        // Verwijder token  y=118..142  x=328..458
+        else if (ty >= 118 && ty <= 142 && tx >= 328 && tx <= 458 && _hueDisplayToken[0] != '\0')
             onHueDeleteToken();
         break;
     }
@@ -302,9 +425,10 @@ void displaySettingsTabNext()
     _drawSettingsPage();
 }
 
-void displaySetHueConfig(const char* ip, bool hasToken)
+void displaySetHueConfig(const char* ip, const char* token)
 {
     strncpy(_hueDisplayIp, ip, sizeof(_hueDisplayIp) - 1);
-    _hueDisplayToken = hasToken;
+    strncpy(_hueDisplayToken, token, sizeof(_hueDisplayToken) - 1);
+    _hueDisplayToken[sizeof(_hueDisplayToken) - 1] = '\0';
     if (_currentPage == 5 && _settingsTab == 3) _drawSettingsPage();
 }

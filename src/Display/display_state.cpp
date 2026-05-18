@@ -123,13 +123,17 @@ uint8_t _hueSceneSel   = 0;
 uint8_t _hueBrightness = 65;
 bool    _hueOn         = false;
 char    _hueDisplayIp[24]  = "--";
-bool    _hueDisplayToken   = false;
+char    _hueDisplayToken[72] = {};
 
-const _HueRoom _hueRooms[] = {
+// Hue IP numpad editor
+bool    _hueIpEditActive   = false;
+char    _hueIpEditBuf[24]  = {};
+
+_HueRoom _hueRooms[] = {
     { "Woonkamer",  { {"Ontspannen"},{"Lezen"},{"Concentrate"},{"Nacht"},{"Helder"},{"Energie"},{"Dimmen"},{"Uit"} }, 8 },
     { "Slaapkamer", { {"Ontspannen"},{"Nacht"},{"Lezen"},{"Dimmen"} }, 4 },
     { "Keuken",     { {"Helder"},{"Dimmen"},{"Nacht"} }, 3 },
-    { "Bureau",     { {"Concentrate"},{"Lezen"},{"Dimmen"} }, 3 },
+    { "Jurjan",     { {"Ontspannen"},{"Lezen"},{"Concentreren"},{"Helder"},{"Nachtlampje"},{"Energie"},{"Feestelijk"},{"Twinkelen"} }, 8 },
 };
 const uint8_t _hueRoomCount = 4;
 

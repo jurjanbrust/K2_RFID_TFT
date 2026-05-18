@@ -71,7 +71,10 @@ void displayUpdateAirco(uint8_t temp, uint8_t fanIdx, uint8_t acMode, bool power
 void displaySetWifi(bool ok);
 void displaySetLastAction(const char* action);
 void displaySetPortalActive(bool active, const char* ssid = "");
-void displaySetHueConfig(const char* ip, bool hasToken);
+void displaySetHueConfig(const char* ip, const char* token);
+void displayRefreshLamp();
+void displaySetHueSceneName(uint8_t roomIdx, uint8_t sceneIdx, const char* name);
+void displaySetHueSceneCount(uint8_t roomIdx, uint8_t count);
 void displayToast(const char* msg);
 void displayShowOtaStart();
 void displayShowOtaProgress(uint8_t pct);

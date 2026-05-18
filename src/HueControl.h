@@ -31,3 +31,5 @@ void onHuePower(uint8_t roomIdx, bool on);
 void onHueBrightness(uint8_t roomIdx, uint8_t pct);
 void onHuePair();
 void onHueDeleteToken();
+void onHueSetIp(const char* ip);
+void hueRefreshScenes();

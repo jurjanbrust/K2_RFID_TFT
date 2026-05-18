@@ -19,6 +19,28 @@ void _clearToast()
 }
 
 // ---------------------------------------------------------------------------
+// displayRefreshLamp – herteken Lamp-pagina als die actief is
+// ---------------------------------------------------------------------------
+void displayRefreshLamp()
+{
+    if (_currentPage == 1) _drawLampPage();
+}
+
+void displaySetHueSceneName(uint8_t roomIdx, uint8_t sceneIdx, const char* name)
+{
+    if (roomIdx >= _hueRoomCount || sceneIdx >= 8) return;
+    strncpy(_hueRooms[roomIdx].scenes[sceneIdx].name, name,
+            sizeof(_hueRooms[roomIdx].scenes[sceneIdx].name) - 1);
+    _hueRooms[roomIdx].scenes[sceneIdx].name[sizeof(_hueRooms[roomIdx].scenes[sceneIdx].name) - 1] = '\0';
+}
+
+void displaySetHueSceneCount(uint8_t roomIdx, uint8_t count)
+{
+    if (roomIdx >= _hueRoomCount) return;
+    _hueRooms[roomIdx].sceneCount = count;
+}
+
+// ---------------------------------------------------------------------------
 // displayInit
 // ---------------------------------------------------------------------------
 void displayInit()
