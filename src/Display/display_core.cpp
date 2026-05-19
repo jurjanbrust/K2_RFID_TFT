@@ -61,13 +61,16 @@ void displayInit()
 
     _parseSpoolData(spoolData);
     _initSelections();
+    _initJpgDecoder();
 
     _calLoaded = _loadTouchCal();
     if (!_calLoaded)
         Serial.println("[CAL] geen opgeslagen kalibratie, standaard waarden gebruikt");
 
+    _lastActivity = millis();   // voorkom direct auto-page-switch na boot
+    _currentPage  = 1;          // Lamp is de standaard startpagina
     _drawHeader();
-    _drawMainPage();
+    _drawLampPage();
 }
 
 // ---------------------------------------------------------------------------

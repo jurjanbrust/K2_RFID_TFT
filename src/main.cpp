@@ -12,6 +12,7 @@
 #include <IRsend.h>
 #include <ir_MitsubishiHeavy.h>
 #include <RotaryEncoder.h>
+#include <SpotifyArduino.h>
 #include "includes.h"
 #include "HueControl.h"
 #include "WifiPortal.h"
@@ -77,6 +78,41 @@ static const char* const kAcModeNames[] = { "Auto","Koel","Warm" };
 static bool    wifiOk = false;
 WiFiClient     wifiClient;
 static const char* const kWledHosts[] = { "192.168.10.24", "192.168.10.232" };
+
+// ---------------------------------------------------------------------------
+// Spotify
+// ---------------------------------------------------------------------------
+static char             _spClientId[40]     = {};
+static char             _spClientSecret[40] = {};
+static char             _spRefreshToken[160]= {};
+static WiFiClientSecure _spSecure;
+static SpotifyArduino*  _spotify            = nullptr;
+static bool             _spTokenReady       = false;
+
+static char _cbTrack[64]     = {};
+static char _cbArtist[64]    = {};
+static char _cbImageUrl[200] = {};
+static char _cbPrevTrack[64] = {};
+static bool _cbPlaying       = false;
+static void _spotifyCallback(CurrentlyPlaying cp)
+{
+    const char* t = cp.trackName ? cp.trackName : "";
+    const char* a = (cp.numArtists > 0 && cp.artists[0].artistName)
+                    ? cp.artists[0].artistName : "";
+    // Wis oud albumart meteen als het nummer gewisseld is
+    if (strcmp(t, _cbTrack) != 0)
+        displayClearAlbumArt();
+    strncpy(_cbTrack,  t, sizeof(_cbTrack)  - 1);
+    strncpy(_cbArtist, a, sizeof(_cbArtist) - 1);
+    _cbPlaying = cp.isPlaying;
+    // Save medium album art URL (index 1 = 300×300); fall back to smallest
+    _cbImageUrl[0] = 0;
+    if (cp.numImages >= 2 && cp.albumImages[1].url)
+        strncpy(_cbImageUrl, cp.albumImages[1].url, sizeof(_cbImageUrl) - 1);
+    else if (cp.numImages > 0 && cp.albumImages[cp.numImages - 1].url)
+        strncpy(_cbImageUrl, cp.albumImages[cp.numImages - 1].url, sizeof(_cbImageUrl) - 1);
+    displayUpdateSpotify(_cbTrack, _cbArtist, cp.isPlaying);
+}
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -290,9 +326,21 @@ void onIrAudio(uint8_t action)
 {
     switch (action)
     {
-    case IR_AUDIO_PLAYPAUSE: irsend.sendNEC(IR_PLAYPAUZE); displaySetLastAction("Play / Pauze");          break;
-    case IR_AUDIO_PREV:      irsend.sendNEC(IR_BACKWARD);  displaySetLastAction("Vorig");                  break;
-    case IR_AUDIO_NEXT:      irsend.sendNEC(IR_FORWARD);   displaySetLastAction("Volgend");                break;
+    case IR_AUDIO_PLAYPAUSE:
+        irsend.sendNEC(IR_PLAYPAUZE);
+        if (_spotify && _spTokenReady) { if (_cbPlaying) _spotify->pause(); else _spotify->play(); }
+        displaySetLastAction("Play / Pauze");
+        break;
+    case IR_AUDIO_PREV:
+        irsend.sendNEC(IR_BACKWARD);
+        if (_spotify && _spTokenReady) _spotify->previousTrack();
+        displaySetLastAction("Vorig");
+        break;
+    case IR_AUDIO_NEXT:
+        irsend.sendNEC(IR_FORWARD);
+        if (_spotify && _spTokenReady) _spotify->nextTrack();
+        displaySetLastAction("Volgend");
+        break;
     case IR_AUDIO_ONOFF:     irsend.sendNEC(IR_ONOFF);     displaySetLastAction("Aan / Uit");              break;
     case IR_AUDIO_LINE1:
         irsend.sendNEC(IR_LINE1);
@@ -467,6 +515,22 @@ void setup()
     }
     displaySetWifi(wifiOk);
 
+    // Spotify – credentials uit NVS laden en client aanmaken (geen netwerk in setup)
+    {
+        Preferences sp;
+        sp.begin("spotify", true);
+        sp.getString("client_id",     "").toCharArray(_spClientId,     sizeof(_spClientId));
+        sp.getString("client_secret", "").toCharArray(_spClientSecret, sizeof(_spClientSecret));
+        sp.getString("refresh_token", "").toCharArray(_spRefreshToken, sizeof(_spRefreshToken));
+        sp.end();
+        if (_spClientId[0] != '\0')
+        {
+            _spSecure.setInsecure();
+            _spotify = new SpotifyArduino(_spSecure, _spClientId, _spClientSecret, _spRefreshToken);
+            Serial.println("[Spotify] client aangemaakt");
+        }
+    }
+
     // Hue
     hueInit();
 
@@ -591,6 +655,41 @@ void loop()
     if (wifiOk) {
         ArduinoOTA.handle();
         otaServerLoop();
+    }
+
+    // Spotify: lazy token refresh + poll elke 5 s
+    {
+        static unsigned long _lastSpotify  = 0;
+        if (_spotify && wifiOk && millis() - _lastSpotify > 5000)
+        {
+            _lastSpotify = millis();
+            if (!_spTokenReady)
+            {
+                _spTokenReady = _spotify->refreshAccessToken();
+                _spSecure.stop();   // sluit accounts.spotify.com connectie zodat volgende call werkt
+                Serial.printf("[Spotify] token refresh: %s\n", _spTokenReady ? "OK" : "mislukt");
+                // sla deze iteratie over – volgende poll gebruikt verse connectie
+            }
+            else
+            {
+                int r = _spotify->getCurrentlyPlaying(_spotifyCallback);
+                _spSecure.stop();   // sluit api.spotify.com connectie
+                if (r == 401) {
+                    _spTokenReady = false;
+                } else if (r > 0 && _cbImageUrl[0] && strcmp(_cbTrack, _cbPrevTrack) != 0) {
+                    // Nieuw nummer – haal album art op (64×64)
+                    strncpy(_cbPrevTrack, _cbTrack, sizeof(_cbPrevTrack) - 1);
+                    uint8_t* imgBuf = nullptr;
+                    int      imgLen = 0;
+                    if (_spotify->getImage(_cbImageUrl, &imgBuf, &imgLen)) {
+                        if (imgBuf && imgLen > 0)
+                            displayRenderAlbumArt(imgBuf, imgLen);
+                        free(imgBuf);
+                    }
+                    _spSecure.stop();   // sluit i.scdn.co connectie
+                }
+            }
+        }
     }
 
 #ifdef DEBUG

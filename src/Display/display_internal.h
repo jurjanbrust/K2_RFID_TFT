@@ -98,6 +98,15 @@ extern const uint8_t    _extColorCount;
 // Audio page
 extern uint8_t       _audioSource;   // 0=Line1 1=Line2 2=BT
 
+// Spotify
+extern char _spTrack[64];
+extern char _spArtist[64];
+extern bool _spPlaying;
+
+// Album art cache
+extern uint8_t  _albumArtJpeg[32768];
+extern uint16_t _albumArtLen;
+
 // Macro's page
 extern uint8_t       _macroSel;
 extern const _MacroDef _macrosList[];
@@ -189,6 +198,8 @@ void _drawBar(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t pct, uint16_t 
 void _drawHeader();
 void _drawNtpClock();
 void _drawPageStatusBar(const char* hint, uint16_t bg = CLR_STATUS_BG);
+void _initJpgDecoder();
+void _renderAlbumArtBox(int16_t x, int16_t y, int16_t w, int16_t h);
 
 // Page draw (page_*.cpp)
 void _drawMainPage();

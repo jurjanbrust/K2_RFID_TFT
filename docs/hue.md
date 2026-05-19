@@ -66,8 +66,7 @@ Flash eenmalig deze setup-sketch:
 ```cpp
 #include <Preferences.h>
 void setup() {
-    Preferences p;
-    p.begin("hue", false);
+    Preferences p;    p.begin("hue", false);
     p.putString("bridge", "192.168.10.50");
     p.putString("token",  "AbCdEfGhIjKlMnOpQrStUvWxYz1234567890");
     p.end();

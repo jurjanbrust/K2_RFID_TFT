@@ -1,8 +1,59 @@
 #include "display_internal.h"
+#include <TJpg_Decoder.h>
 
 // ---------------------------------------------------------------------------
-// Shared drawing primitives
+// JPEG decoder (TJpg_Decoder) – album art
 // ---------------------------------------------------------------------------
+static bool _jpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
+{
+    _tft->pushImage(x, y, w, h, bitmap);
+    return true;
+}
+
+void _initJpgDecoder()
+{
+    TJpgDec.setJpgScale(1);
+    TJpgDec.setSwapBytes(true);
+    TJpgDec.setCallback(_jpgOutput);
+}
+
+// Draw the album-art box (x,y,w,h).  Shows JPEG if cached, else play/pause symbol.
+// Expects a 300×300 JPEG – rendered at scale 2 → 150×150 pixels.
+void _renderAlbumArtBox(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    _tft->fillRect(x, y, w, h, 0x1082);
+    if (_albumArtLen > 0) {
+        // Center 150×150 image inside box
+        TJpgDec.setJpgScale(2);
+        int16_t ix = x + (w - 150) / 2;
+        int16_t iy = y + (h - 150) / 2;
+        TJpgDec.drawJpg(ix, iy, _albumArtJpeg, _albumArtLen);
+    } else {
+        // Placeholder symbol
+        _tft->setTextFont(4);
+        _tft->setTextColor(0xC618, 0x1082);
+        _tft->setCursor(x + w / 2 - 13, y + h / 2 - 13);
+        _tft->print(_spPlaying ? ">" : "||");
+    }
+}
+
+void displayRenderAlbumArt(uint8_t* data, int len)
+{
+    uint16_t copyLen = (uint16_t)min(len, (int)sizeof(_albumArtJpeg));
+    memcpy(_albumArtJpeg, data, copyLen);
+    _albumArtLen = copyLen;
+    if (_currentPage == 2)
+        _renderAlbumArtBox(8, 52, 168, 168);
+}
+
+void displayClearAlbumArt()
+{
+    _albumArtLen = 0;
+    if (_currentPage == 2)
+        _renderAlbumArtBox(8, 52, 168, 168);
+}
+
+
 
 // Button with centred label; highlighted if active
 void _btn(int16_t x, int16_t y, int16_t w, int16_t h,
@@ -43,13 +94,12 @@ void _drawBar(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t pct, uint16_t 
 // ---------------------------------------------------------------------------
 void _drawNtpClock()
 {
-    _tft->fillRect(415, 0, 65, 48, TFT_BLACK);
-    // LCARS: rechter accentstrepen herstellen (worden anders door fillRect overschreven)
-    _tft->fillRect(415, 0, 65, 5, CLR_ACCENT);
-    _tft->fillRect(415, 43, 65, 5, CLR_ACCENT);
-    _tft->setTextFont(2);
+    // Clear clock zone (binnen LCARS accent strips y=5..42)
+    _tft->fillRect(322, 5, 158, 38, TFT_BLACK);
+    _tft->setTextFont(4);   // 26px – goed leesbaar
     _tft->setTextColor(CLR_ACCENT, TFT_BLACK);
-    _tft->setCursor(418, 18);
+    int16_t tw = _tft->textWidth(_ntpBuf);
+    _tft->setCursor(480 - 8 - tw, 11);
     _tft->print(_ntpBuf);
 }
 
@@ -80,12 +130,12 @@ void _drawHeader()
             _tft->fillCircle(cx, dotY, dotR - 2, 0x1082);
     }
 
-    // Page name centred in x=160..415 (255px)
+    // Page name centred on screen
     _tft->setTextFont(4);
     _tft->setTextColor(CLR_ACCENT, TFT_BLACK);
     const char* name = _pageNames[_currentPage];
     int16_t tw = _tft->textWidth(name);
-    _tft->setCursor(160 + (255 - tw) / 2, 11);
+    _tft->setCursor(240 - tw / 2, 11);
     _tft->print(name);
 
     _drawNtpClock();

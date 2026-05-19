@@ -92,6 +92,15 @@ const uint8_t _extColorCount = 24;
 // Audio page
 uint8_t _audioSource = 0;
 
+// Spotify
+char _spTrack[64]  = {};
+char _spArtist[64] = {};
+bool _spPlaying    = false;
+
+// Album art cache  (300×300 JPEG at scale/2 → 150×150 pixels, typically 20-30 KB)
+uint8_t  _albumArtJpeg[32768] = {};
+uint16_t _albumArtLen         = 0;
+
 // Macro's page
 uint8_t _macroSel = 0;
 const _MacroDef _macrosList[] = {
